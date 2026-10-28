@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/
+
+# Go
+App/bin/
+*.test
+coverage.*
+
+# e2e run results (local artifacts)
+Export/e2e/
+
+# stray local builds
+App/cmd/swarg/swarg
+/App/swarg
+Export/eval/
+Export/live/

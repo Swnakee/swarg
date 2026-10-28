@@ -1,0 +1,13 @@
+{"t":"2026-10-27T10:00:00Z","ms":0,"kind":"request","d":{"step":1,"msgs":2,"model":"qwen","added":[{"role":"system"},{"role":"user","content":"read a.txt"}]}}
+{"t":"2026-10-27T10:00:01Z","ms":1250,"kind":"usage","d":{"prompt":1000,"completion":40,"cached":800}}
+{"t":"2026-10-27T10:00:01Z","ms":1300,"kind":"delta","d":{"text":"I will read the file.\nNow.","calls":[{"id":"c1","name":"read_file"}]}}
+{"t":"2026-10-27T10:00:01Z","ms":1310,"kind":"tool_start","d":{"name":"read_file","args":"{\"path\":\"a.txt\"}"}}
+{"t":"2026-10-27T10:00:02Z","ms":2400,"kind":"tool_end","d":{"name":"read_file","brief":"a.txt 4 lines","ms":1090,"output":"alpha\n\nbeta\ngamma\ndelta"}}
+{"t":"2026-10-27T10:00:12Z","ms":12345,"kind":"request","d":{"step":2,"msgs":5,"added":3}}
+{"t":"2026-10-27T10:00:13Z","ms":13000,"kind":"stub_batch","d":{"seqs":[3,4],"why":"turn end","count":2}}
+{"t":"2026-10-27T10:00:14Z","ms":65500,"kind":"compact","d":{"from_seq":2,"to_seq":9,"fallback":true,"input":"x"}}
+{"t":"2026-10-27T10:00:15Z","ms":66000,"kind":"tool_end","d":{"name":"shell","ms":30,"output":"","error":"exit status 1"}}
+{"t":"2026-10-27T10:00:15Z","ms":66100,"kind":"warning","d":{"text":"context still full"}}
+{"t":"2026-10-27T10:00:16Z","ms":66200,"kind":"approval"}
+not json at all
+{"t":"2026-10-27T10:00:17Z","ms":66300,"kind":"usage","d":{"pro

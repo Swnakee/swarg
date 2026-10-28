@@ -1,0 +1,191 @@
+package session
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+
+	"swarg/internal/chat"
+)
+
+// ---------------------------------------------------------------------------
+// Replay
+// ---------------------------------------------------------------------------
+
+// Entry is one message of the replayed history with its seq.
+type Entry struct {
+	Seq int
+	Msg chat.Message // Msg.Seq equals Seq
+}
+
+// Dangling is a tool call of an assistant message that has no result.
+type Dangling struct {
+	Seq  int // seq of the assistant message
+	Call chat.ToolCall
+}
+
+// Loaded is the result of replaying a SessionFile.
+type Loaded struct {
+	Header   Header
+	Name     string // the Session's Name (/rename), "" when it was never named
+	Entries  []Entry
+	Dangling []Dangling // calls without results; the caller decides how to repair
+
+	goodSize int64 // size of the file up to the last complete record
+	maxSeq   int
+	model    string // the last Model choice line; "" = none
+}
+
+// MaxSeq is the highest seq the file ever used (also by cleared or compacted messages); the
+// agent continues its numbering above it.
+func (l Loaded) MaxSeq() int { return l.maxSeq }
+
+// Model is the model the Session uses at its end: the last Model choice line, else the header's
+// model (files written before model lines existed have only the header).
+func (l Loaded) Model() string {
+	if l.model != "" {
+		return l.model
+	}
+	return l.Header.Model
+}
+
+// Messages returns the replayed history (each message carries its Seq).
+func (l Loaded) Messages() []chat.Message {
+	ms := make([]chat.Message, len(l.Entries))
+	for i, e := range l.Entries {
+		ms[i] = e.Msg
+	}
+	return ms
+}
+
+// Load replays the SessionFile exactly: msg appends, patch applies stubs and
+// shrunk args, clear empties, compact replaces a range by its summary, repair
+// appends, a model line changes the model. An unterminated last line (a torn write) is skipped; a bad line
+// anywhere else is an error naming the line.
+func Load(path string) (Loaded, error) { return load(path) }
+
+func load(path string) (Loaded, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return Loaded{}, fmt.Errorf("session: %w", err)
+	}
+	defer f.Close()
+	rd := bufio.NewReaderSize(f, 1<<16)
+	var l Loaded
+	for n := 1; ; n++ {
+		line, err := rd.ReadBytes('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return Loaded{}, fmt.Errorf("session: %s: %w", path, err)
+		}
+		if len(line) == 0 {
+			break
+		}
+		if line[len(line)-1] != '\n' { // torn last line
+			break
+		}
+		l.goodSize += int64(len(line))
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var r record
+		if err := json.Unmarshal(line, &r); err != nil {
+			return Loaded{}, fmt.Errorf("session: %s: line %d: %w", path, n, err)
+		}
+		if n == 1 {
+			if r.V == 0 {
+				return Loaded{}, fmt.Errorf("session: %s: no header", path)
+			}
+			if r.V != Version {
+				return Loaded{}, fmt.Errorf("session: %s: unsupported version %d", path, r.V)
+			}
+			l.Header = Header{V: r.V, ID: r.ID, Cwd: r.Cwd, Model: r.Model, Started: r.Started}
+			continue
+		}
+		if err := l.apply(r); err != nil {
+			return Loaded{}, fmt.Errorf("session: %s: line %d: %w", path, n, err)
+		}
+	}
+	if l.Header.V == 0 {
+		return Loaded{}, fmt.Errorf("session: %s: no header", path)
+	}
+	l.findDangling()
+	return l, nil
+}
+
+func (l *Loaded) apply(r record) error {
+	switch {
+	case r.Msg != nil:
+		l.add(*r.Msg)
+	case r.Patch != nil:
+		for _, p := range r.Patch {
+			i := l.index(p.Seq)
+			if i < 0 {
+				return fmt.Errorf("patch: no message with seq %d", p.Seq)
+			}
+			e := &l.Entries[i]
+			if p.Stub != "" {
+				e.Msg.Stub = p.Stub
+			}
+			for j, c := range e.Msg.ToolCalls {
+				if a, ok := p.Args[c.ID]; ok {
+					e.Msg.ToolCalls[j].Args = a
+				}
+			}
+		}
+	case r.Clear:
+		l.Entries = nil
+	case r.Compact != nil:
+		c := r.Compact
+		i, j := l.index(c.FromSeq), l.index(c.ToSeq)
+		if i < 0 || j < 0 || i > j {
+			return fmt.Errorf("compact: bad range seq %d..%d", c.FromSeq, c.ToSeq)
+		}
+		tail := append([]Entry{{Seq: c.Summary.Seq, Msg: fromDTO(c.Summary)}}, l.Entries[j+1:]...)
+		l.Entries = append(l.Entries[:i], tail...)
+		l.maxSeq = max(l.maxSeq, c.Summary.Seq)
+	case r.Repair != nil:
+		for _, m := range r.Repair {
+			l.add(m)
+		}
+	case r.Name != "":
+		l.Name = r.Name // the last Name wins; the history is untouched (I-11)
+	case r.Model != "": // a Model choice (only the header line has V set)
+		l.model = r.Model
+	}
+	return nil
+}
+
+func (l *Loaded) add(m msgRecord) {
+	l.Entries = append(l.Entries, Entry{Seq: m.Seq, Msg: fromDTO(m)})
+	l.maxSeq = max(l.maxSeq, m.Seq)
+}
+
+func (l *Loaded) index(seq int) int {
+	for i, e := range l.Entries {
+		if e.Seq == seq {
+			return i
+		}
+	}
+	return -1
+}
+
+// findDangling lists the calls that have no tool result anywhere after them.
+func (l *Loaded) findDangling() {
+	answered := map[string]bool{}
+	for _, e := range l.Entries {
+		if e.Msg.Role == chat.RoleTool {
+			answered[e.Msg.ToolCallID] = true
+		}
+	}
+	for _, e := range l.Entries {
+		for _, c := range e.Msg.ToolCalls {
+			if !answered[c.ID] {
+				l.Dangling = append(l.Dangling, Dangling{Seq: e.Seq, Call: c})
+			}
+		}
+	}
+}

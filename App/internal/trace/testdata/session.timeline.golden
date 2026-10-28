@@ -1,0 +1,14 @@
+  +0.0s request    step=1 msgs=+2 total=2 model=qwen
+  +1.2s usage      prompt=1000 completion=40 cached=800 cache=80%
+  +1.3s delta      text="I will read the file. Now." calls=1
+  +1.3s tool_start read_file {"path":"a.txt"}
+  +2.4s tool_end   read_file brief="a.txt 4 lines" 1090ms size=23B
+                   | alpha
+                   | beta
+                   | gamma
+ +12.3s request    step=2 msgs=+3 total=5
+ +13.0s stub_batch count=2 seqs=[3,4] why="turn end"
+ +65.5s compact    fallback=true from_seq=2 input="x" to_seq=9
+ +66.0s tool_end   shell 30ms size=0B error="exit status 1"
+ +66.1s warning    text="context still full"
+ +66.2s approval

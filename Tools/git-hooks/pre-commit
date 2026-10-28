@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# swarg pre-commit gate (Definition of Done). Install once per clone:
+#   git config core.hooksPath Tools/git-hooks
+# E2e runs are not part of the gate: they need the model server.
+# ---------------------------------------------------------------------------
+set -u
+cd "$(git rev-parse --show-toplevel)/App" || exit 1
+
+fail() { echo "pre-commit: $*" >&2; exit 1; }
+
+unformatted=$(gofmt -l .)
+[ -z "$unformatted" ] || fail "gofmt needed for:
+$unformatted"
+
+go vet ./...           || fail "go vet failed"
+go test -race ./...    || fail "tests failed"
+
+for os in windows linux darwin; do
+    GOOS=$os go build -o /dev/null ./... || fail "build failed for $os"
+done
+echo "pre-commit: gate passed"
