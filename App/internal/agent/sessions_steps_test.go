@@ -61,6 +61,7 @@ func (p proxyStore) Compact(f, t int, s chat.Message) error {
 }
 func (p proxyStore) Repair(ms []chat.Message) error { return p.cur().Repair(ms) }
 func (p proxyStore) Flush() error                   { return p.cur().Flush() }
+func (p proxyStore) Thinking(on bool) error         { return p.cur().Thinking(on) }
 func (p proxyStore) Model(name string) error        { return p.cur().Model(name) }
 
 type noStore struct{}
@@ -69,6 +70,7 @@ func (noStore) Message(chat.Message) error           { return nil }
 func (noStore) Patch([]chat.Patch) error             { return nil }
 func (noStore) Clear() error                         { return nil }
 func (noStore) Compact(int, int, chat.Message) error { return nil }
+func (noStore) Thinking(bool) error                  { return nil }
 func (noStore) Repair([]chat.Message) error          { return nil }
 func (noStore) Flush() error                         { return nil }
 func (noStore) Model(string) error                   { return nil }
@@ -166,7 +168,7 @@ func (w *world) resume() error {
 	}
 	w.tb.Cleanup(func() { wr.Close() })
 	s.writer = wr
-	if err := w.ag.Load(l.Messages(), WithMaxSeq(l.MaxSeq()), WithModel(l.Model())); err != nil {
+	if err := w.ag.Load(l.Messages(), WithMaxSeq(l.MaxSeq()), WithModel(l.Model()), WithThinking(l.Thinking())); err != nil {
 		return err
 	}
 	s.during = w.ag.History()

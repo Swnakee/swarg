@@ -86,7 +86,7 @@ func (w *world) toolOnlyAnswer(tokens int, read, end float64) {
 	r := w.toolReply([2]string{"ping", "{}"})
 	r.Keepalives, r.Usage = 1, &chat.Usage{CompletionTokens: tokens}
 	w.reply(r)
-	w.models().timed(read, end, end) // progress, usage, done (the tool call comes with the final chunk)
+	w.models().timed(read, end, end, end) // progress, tool-call arguments (R-61), usage, done (the tool call comes with the final chunk)
 }
 
 // requestModel is the "model" field of request i (0-based).
@@ -163,6 +163,7 @@ func registerModelSteps(sc *godog.ScenarioContext, w *world) {
 		}
 		l, err := session.Load(w.sessions().path)
 		w.models().replayed = l.Model()
+		w.thinks().replayed = l.Thinking()
 		return err
 	})
 

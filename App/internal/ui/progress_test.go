@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"swarg/internal/agent"
 	"swarg/internal/chat"
 )
 
@@ -147,5 +149,53 @@ func TestProgress_NoNewRowsMarkerFromFooter(t *testing.T) {
 	r.send(tickMsg(r.now.Add(time.Second)))
 	if strings.Contains(r.view(), "new rows") {
 		t.Errorf("footer rows counted as new:\n%s", r.view())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The counter and the live speed count every streamed chunk (R-61)
+// ---------------------------------------------------------------------------
+
+func activity(s string) agent.Event { return agent.Event{Kind: agent.EvActivity, Text: s} }
+
+// tokensShown parses "~N tokens" of the Progress line.
+func (r *rig) tokensShown() int {
+	r.t.Helper()
+	i := r.rowIndex("tokens")
+	if i < 0 {
+		r.t.Fatalf("no token counter:\n%s", r.view())
+	}
+	var n int
+	for _, f := range strings.Fields(r.rows()[i]) {
+		if _, err := fmt.Sscanf(f, "~%d", &n); err == nil {
+			return n
+		}
+	}
+	r.t.Fatalf("no ~N on the Progress line: %q", r.rows()[i])
+	return 0
+}
+
+func TestProgress_CountsReasoningAndToolArgs(t *testing.T) {
+	r := newRig(t)
+	r.events(started("q"), activity(strings.Repeat("thinking hard ", 30)))
+	if n := r.tokensShown(); n < 20 {
+		t.Errorf("counter %d after 420 chars of reasoning, want it to grow", n)
+	}
+	r.now = r.now.Add(2 * time.Second)
+	r.events(activity(`{"path":"a.txt","content":"`), activity(strings.Repeat("x", 200)))
+	if !strings.Contains(r.view(), "tok/s") {
+		t.Errorf("no live speed after streamed tool arguments:\n%s", r.view())
+	}
+	if strings.Contains(r.convText(), "thinking hard") {
+		t.Errorf("activity text leaked into the conversation:\n%s", r.convText())
+	}
+}
+
+func TestProgress_CounterResetsPerTurn(t *testing.T) {
+	r := newRig(t)
+	r.events(started("q"), activity(strings.Repeat("word ", 50)), ended(chat.FinishStop, nil))
+	r.events(started("next"))
+	if n := r.tokensShown(); n != 0 {
+		t.Errorf("counter %d at the start of the next Turn, want 0", n)
 	}
 }

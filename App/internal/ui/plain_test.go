@@ -329,3 +329,14 @@ func TestRunPlain_BackgroundStartedAndPolled(t *testing.T) {
 		t.Errorf("jobs = %+v, want one finished job", got)
 	}
 }
+
+func TestRunPlain_IgnoresActivity(t *testing.T) {
+	d, _ := plainDeps(t, llmtest.Reply{Reasoning: []string{"deep thought"}, Chunks: []string{"ok\n"}})
+	var out bytes.Buffer
+	if err := RunPlain(context.Background(), d, strings.NewReader("go\n"), &out); err != nil {
+		t.Fatalf("RunPlain: %v", err)
+	}
+	if got := out.String(); got != "ok\n" {
+		t.Errorf("output = %q, want only the answer", got)
+	}
+}

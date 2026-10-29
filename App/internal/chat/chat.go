@@ -98,13 +98,14 @@ const (
 	EventUsage
 	EventDone
 	EventReasoning // Text carries a reasoning chunk (delta.reasoning_content)
+	EventToolDelta // Text carries a chunk of a tool call's arguments (R-61); the complete call comes with EventDone
 )
 
 // StreamEvent is one event of a streamed completion. A stream always ends with
 // exactly one EventDone, after which the channel is closed.
 type StreamEvent struct {
 	Kind   EventKind
-	Text   string       // EventDelta, EventReasoning
+	Text   string       // EventDelta, EventReasoning, EventToolDelta
 	Done   int          // EventProgress: prefill progress Done of Total
 	Total  int          // EventProgress
 	Usage  Usage        // EventUsage

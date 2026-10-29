@@ -23,6 +23,7 @@ import (
 type storeOp struct {
 	kind  string // message | patch | clear | compact | repair | model | flush
 	model string // model: the chosen id
+	on    bool   // thinking: the new mode
 	from  int    // compact: first Seq replaced
 	to    int    // compact: last Seq replaced
 	msg   chat.Message
@@ -62,6 +63,7 @@ func (f *fakeStore) Compact(from, to int, s chat.Message) error {
 }
 func (f *fakeStore) Repair(ms []chat.Message) error { return f.add(storeOp{kind: "repair", msgs: ms}) }
 func (f *fakeStore) Flush() error                   { return f.add(storeOp{kind: "flush"}) }
+func (f *fakeStore) Thinking(on bool) error         { return f.add(storeOp{kind: "thinking", on: on}) }
 func (f *fakeStore) Model(name string) error        { return f.add(storeOp{kind: "model", model: name}) }
 
 func (f *fakeStore) all() []storeOp {

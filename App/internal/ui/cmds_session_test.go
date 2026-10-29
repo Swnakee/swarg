@@ -232,8 +232,8 @@ func TestOpenSession_RebuildsList(t *testing.T) {
 	if len(ss.loads) != 1 || ss.loads[0] != "old" || len(ag.loaded) != 1 || len(ag.loaded[0]) != 7 {
 		t.Fatalf("loads %v, agent loads %d", ss.loads, len(ag.loaded))
 	}
-	if ag.loadOpts != 2 {
-		t.Errorf("Load got %d options, want WithMaxSeq and WithModel", ag.loadOpts)
+	if ag.loadOpts != 3 {
+		t.Errorf("Load got %d options, want WithMaxSeq, WithModel and WithThinking", ag.loadOpts)
 	}
 	text := r.convText()
 	for _, want := range []string{"read a.go", "sure", "read_file(a.go)  #1", "read 1 line", "shell(false)  #2",

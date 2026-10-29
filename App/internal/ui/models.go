@@ -81,3 +81,30 @@ func (m *model) setModel(name string) {
 	m.modelName = strings.TrimSpace(name)
 	m.say("model: " + m.modelName + " (used from the next request)")
 }
+
+// thinkText is the Bottom panel item shown while the thinking mode is on.
+const thinkText = "think"
+
+// think is /think [on|off]: no argument shows the state; on or off asks the agent to switch the
+// thinking mode from the next request on (R-60).
+func (m *model) think(arg string) {
+	if arg == "" {
+		m.say("thinking: " + onOff(m.thinking))
+		return
+	}
+	t, ok := m.d.Agent.(thinker)
+	if !ok {
+		m.say("this agent cannot change the thinking mode")
+		return
+	}
+	t.SetThinking(arg == "on")
+	m.thinking = arg == "on"
+	m.say("thinking: " + onOff(m.thinking) + " (used from the next request)")
+}
+
+func onOff(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
+}

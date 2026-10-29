@@ -121,6 +121,18 @@ func registerTaskSteps(sc *godog.ScenarioContext, w *world) {
 		w.reply(w.toolReply([2]string{a, jsonArgs("path", ".")}, [2]string{taskTool, taskGoalArgs(goal)}, [2]string{b, jsonArgs("path", ".")}))
 		return nil
 	})
+	sc.Step(`^the Provider starts a chain of (\d+) nested Tasks$`, func(n int) error {
+		for i := 1; i <= n; i++ {
+			w.startTask(fmt.Sprintf("level %d", i))
+		}
+		return nil
+	})
+	sc.Step(`^the (\d+) levels report in turn$`, func(n int) error {
+		for i := 0; i < n; i++ {
+			w.say(fmt.Sprintf("report %d", i))
+		}
+		return nil
+	})
 	sc.Step(`^the helper calls "([^"]*)" for "([^"]*)" and then reports "([^"]*)"$`, func(tool, arg, report string) error {
 		w.real = true
 		w.reply(w.toolReply([2]string{tool, jsonArgs(argKey(tool), arg)}))
@@ -446,6 +458,16 @@ func registerTaskSteps(sc *godog.ScenarioContext, w *world) {
 					return fmt.Errorf("ToolCall %s has no ToolResult", c.ID)
 				}
 			}
+		}
+		return nil
+	})
+	sc.Step(`^the Trace holds (\d+) task_start records$`, func(n int) error {
+		starts, err := w.records("task_start")
+		if err != nil {
+			return err
+		}
+		if len(starts) != n {
+			return fmt.Errorf("%d task_start records, want %d", len(starts), n)
 		}
 		return nil
 	})

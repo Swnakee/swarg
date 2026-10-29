@@ -38,7 +38,8 @@ type record struct {
 	Clear   bool           `json:"clear,omitempty"`
 	Compact *compactRecord `json:"compact,omitempty"`
 	Repair  []msgRecord    `json:"repair,omitempty"`
-	Name    string         `json:"name,omitempty"` // the Session was given a Name (/rename); the last one wins
+	Think   *bool          `json:"think,omitempty"` // the thinking mode was switched (/think); the last one wins
+	Name    string         `json:"name,omitempty"`  // the Session was given a Name (/rename); the last one wins
 }
 
 type msgRecord struct {

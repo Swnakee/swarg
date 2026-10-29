@@ -9,14 +9,21 @@ proxy), is verified by a script that runs the code, and is reported with trace s
     App/tests/eval/run.sh -l                      # list tasks
     App/tests/eval/run.sh                         # all tasks, default model Qwen3.5-2B-4bit
     App/tests/eval/run.sh -m mlx-community/Qwen3.5-4B-4bit 'edit-*' 'shell-01*'
+    App/tests/eval/run.sh -p <blocks-dir>   # prompt variant: a blocks dir (R-49), run dir gets its name as a suffix
+    python3 App/tests/eval/eval.py compare Export/eval/<run A> Export/eval/<run B>   # per-task A -> B table (status, failed calls, steps, completion tokens, wall; totals over the tasks in both runs)
 
 Needs: Colima/Docker running, an OpenAI-compatible model server on 127.0.0.1:8080 (the runner does a 1-token
 health check and stops with exit 3 if it is down), the `swarg` build with sessions (`--continue`)
 for multi-turn tasks. Tasks run sequentially (single-lane server). If another e2e run holds the
 lock the runner waits (up to `SWARG_EVAL_LOCK_WAIT`, default 1800 s). Ctrl+C finishes the current
-task, then stops. `SWARG_RUN_TIMEOUT` (default 1800 s) is the per-task cap of the sandbox.
+task, then stops. `SWARG_EVAL_CONFIG=<file>` replaces swarg's config.json in every task
+(experiments, e.g. sampling or thinking; keep `"tools":{"auto_approve":true}` in it). `SWARG_RUN_TIMEOUT` (default 1800 s) is the per-task cap of the sandbox.
 
-Output: `Export/eval/<timestamp>-<model>/`
+`-p <dir>` (or `SWARG_PROMPT_DIR`) installs the folder as the swarg blocks dir inside the sandbox
+(`sandbox/run.sh` copies it to `/work/.swarg-blocks`, `entry.sh` copies it to the config dir and removes it from `/work` before
+swarg starts); the run dir name gets `-<dirname>`.
+
+Output: `Export/eval/<timestamp>-<model>[-<variant>]/`
 
 | File | Content |
 |---|---|

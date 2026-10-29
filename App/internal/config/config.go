@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -28,6 +29,22 @@ type Provider struct {
 	MaxTokens     int            `json:"max_tokens"`
 	APIKeyEnv     string         `json:"api_key_env,omitempty"`
 	ExtraBody     map[string]any `json:"extra_body,omitempty"`
+	// Thinking is the start state of the thinking mode (R-60); false = off, as before. /think
+	// changes it in the app. ThinkingMaxTokens is the output limit while it is on (0 = 8192).
+	Thinking          bool `json:"thinking"`
+	ThinkingMaxTokens int  `json:"thinking_max_tokens,omitempty"`
+	// IdleTimeoutSec ends a stream with no bytes for this long (R-63); 0 = 600. mlx_lm.server
+	// sends a tool call in one chunk at the end of the generation, so a long call at a few tok/s
+	// is minutes of silence.
+	IdleTimeoutSec int `json:"idle_timeout_s,omitempty"`
+}
+
+// IdleTimeout is the stream idle limit: IdleTimeoutSec, or 10 minutes when unset.
+func (p Provider) IdleTimeout() time.Duration {
+	if p.IdleTimeoutSec <= 0 {
+		return 600 * time.Second
+	}
+	return time.Duration(p.IdleTimeoutSec) * time.Second
 }
 
 // Prompt holds the system prompt settings.
@@ -112,7 +129,7 @@ func Defaults() Config {
 				ContextLimit: 16384,
 				MaxTokens:    2048,
 				ExtraBody: map[string]any{
-					"chat_template_args": map[string]any{"enable_thinking": false},
+					"chat_template_kwargs": map[string]any{"enable_thinking": false},
 					// Qwen3.5 non-thinking, general tasks (PLAN 5.7); the server default is greedy
 					"temperature":        0.7,
 					"top_p":              0.8,
@@ -129,8 +146,32 @@ func Defaults() Config {
 		Web:     Web{Confirm: true, TimeoutSec: 15},
 		Session: Session{Save: true, Keep: 50, Trace: true},
 		Context: Context{AutoCompact: 70},
-		Tasks:   Tasks{MaxDepth: 3, MaxSteps: 15, MaxPerTurn: 8},
+		Tasks:   Tasks{MaxDepth: 8, MaxSteps: 15, MaxPerTurn: 8},
 	}
+}
+
+// defaultThinkingMaxTokens is the output limit with thinking on: the reasoning shares it.
+const defaultThinkingMaxTokens = 8192
+
+// ThinkingBody is the part of the request body that changes with thinking on (R-60): it is laid
+// over ExtraBody. Qwen3.5 thinking preset for precise coding (AI_Notes 05).
+func (p Provider) ThinkingBody() map[string]any {
+	return map[string]any{
+		"chat_template_kwargs": map[string]any{"enable_thinking": true},
+		"temperature":          0.6,
+		"top_p":                0.95,
+		"top_k":                20,
+		"min_p":                0.0,
+		"presence_penalty":     0.0,
+	}
+}
+
+// ThinkingLimit is the output limit (max_tokens) with thinking on.
+func (p Provider) ThinkingLimit() int {
+	if p.ThinkingMaxTokens > 0 {
+		return p.ThinkingMaxTokens
+	}
+	return defaultThinkingMaxTokens
 }
 
 // defaultLimits is the built-in context limit per model id. It stays out of Defaults:
@@ -206,6 +247,9 @@ func (c Config) Validate() error {
 	}
 	if p.MaxTokens <= 0 {
 		return fmt.Errorf("config: provider %q: max_tokens must be > 0", c.Provider)
+	}
+	if p.ThinkingMaxTokens < 0 {
+		return fmt.Errorf("config: provider %q: thinking_max_tokens must be >= 0", c.Provider)
 	}
 	if c.Prompt.WarnShare <= 0 || c.Prompt.WarnShare >= 1 {
 		return fmt.Errorf("config: prompt.warn_share must be between 0 and 1 exclusive, got %v", c.Prompt.WarnShare)

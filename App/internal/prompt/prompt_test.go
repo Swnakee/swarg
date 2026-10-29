@@ -467,3 +467,96 @@ func TestSetModel_KeepsDisabledEnvBlockOff(t *testing.T) {
 		t.Errorf("a disabled env block came back:\n%s", s.Build())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Override files (R-49): <name>.md in the global dir replaces a built-in Block's text
+// ---------------------------------------------------------------------------
+
+func TestLoad_OverrideReplacesBase(t *testing.T) {
+	global := t.TempDir()
+	cwd := t.TempDir()
+	writeFile(t, filepath.Join(global, "base.md"), "Custom base\n")
+
+	s, warnings := mustLoad(t, global, cwd)
+
+	if len(warnings) != 1 || !strings.Contains(warnings[0], `block "base" replaced by`) || !strings.Contains(warnings[0], "base.md") {
+		t.Errorf("warnings = %v, want one naming the replaced block and the file", warnings)
+	}
+	if want := "Custom base\n\n" + envBlock(cwd); s.Build() != want {
+		t.Errorf("Build() =\n%q\nwant\n%q", s.Build(), want)
+	}
+	if got := s.List(); len(got) != 2 || got[0].Name != "base" || got[0].Source != SourceBase {
+		t.Errorf("blocks = %+v, want base (source base) then env", got)
+	}
+}
+
+func TestLoad_OverrideReplacesToolBlock(t *testing.T) {
+	global := t.TempDir()
+	cwd := t.TempDir()
+	writeFile(t, filepath.Join(global, "tool-read_file.md"), "read_file: custom\r\n")
+	extra := []Block{
+		{Name: "tool-read_file", Source: SourceTool, Order: 500, Text: "read_file: original"},
+		{Name: "tool-grep", Source: SourceTool, Order: 501, Text: "grep: original"},
+	}
+
+	s, warnings, err := Load(global, cwd, testEnv(cwd), extra...)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(warnings) != 1 || !strings.Contains(warnings[0], `"tool-read_file" replaced`) {
+		t.Errorf("warnings = %v, want one about tool-read_file", warnings)
+	}
+	got := s.Build()
+	if !strings.Contains(got, "read_file: custom\n\ngrep") || strings.Contains(got, "read_file: original") || strings.Contains(got, "\r") {
+		t.Errorf("tool block not replaced or CRLF kept:\n%q", got)
+	}
+	if !strings.Contains(got, "grep: original") {
+		t.Errorf("other tool block changed:\n%s", got)
+	}
+	if got := strings.Join(blockNames(s), ","); got != "base,tool-read_file,tool-grep,env" {
+		t.Errorf("order = %s, want base,tool-read_file,tool-grep,env", got)
+	}
+}
+
+func TestLoad_OverrideWithAddedBlock(t *testing.T) {
+	global := t.TempDir()
+	cwd := t.TempDir()
+	writeFile(t, filepath.Join(global, "base.md"), "Custom base")
+	writeFile(t, filepath.Join(global, "10-style.md"), "Be terse")
+
+	s, _ := mustLoad(t, global, cwd)
+
+	if want := "Custom base\n\nBe terse\n\n" + envBlock(cwd); s.Build() != want {
+		t.Errorf("Build() =\n%q\nwant\n%q", s.Build(), want)
+	}
+}
+
+func TestLoad_OverrideOnlyBaseAndToolBlocks(t *testing.T) {
+	global := t.TempDir()
+	cwd := t.TempDir()
+	writeFile(t, filepath.Join(cwd, "SWARG.md"), "Project text\n")
+	writeFile(t, filepath.Join(global, "10-style.md"), "Be terse\n")
+	for _, name := range []string{"tool-nope.md", "project.md", "env.md", "style.md"} {
+		writeFile(t, filepath.Join(global, name), "Nope")
+	}
+	if err := os.Mkdir(filepath.Join(global, "base.md"), 0o755); err != nil { // a folder, not a file
+		t.Fatal(err)
+	}
+
+	s, warnings := mustLoad(t, global, cwd)
+
+	if len(warnings) != 5 {
+		t.Errorf("warnings = %d, want 5: %v", len(warnings), warnings)
+	}
+	got := s.Build()
+	if strings.Contains(got, "Nope") {
+		t.Errorf("an override for an unknown, global or fixed block was applied:\n%s", got)
+	}
+	if !strings.Contains(got, "Project text") || !strings.Contains(got, "Be terse") || !strings.Contains(got, envBlock(cwd)) || !strings.Contains(got, "You are swarg") {
+		t.Errorf("a block that cannot be overridden changed:\n%s", got)
+	}
+	if got := strings.Join(blockNames(s), ","); got != "base,style,project,env" {
+		t.Errorf("names = %s, want base,style,project,env", got)
+	}
+}

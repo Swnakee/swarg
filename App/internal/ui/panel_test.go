@@ -332,3 +332,57 @@ func TestModelCmd_NumberOutsideTheListIsRefused(t *testing.T) {
 	}
 	r.wantLine(result{}, "no model 7 in the list")
 }
+
+// ---------------------------------------------------------------------------
+// /think (R-60)
+// ---------------------------------------------------------------------------
+
+// thinkAgent is the fake agent plus SetThinking (the optional thinker part).
+type thinkAgent struct {
+	*fakeAgent
+	set []bool
+}
+
+func (a *thinkAgent) SetThinking(on bool) { a.set = append(a.set, on) }
+
+func TestThinkCmd_SwitchesAndShowsInThePanel(t *testing.T) {
+	r := newRig(t)
+	ta := &thinkAgent{fakeAgent: r.ag}
+	r.m.d.Agent = ta
+	if strings.Contains(r.panelText(), thinkText) {
+		t.Fatalf("panel shows think while off: %q", r.panelText())
+	}
+	r.enter("/think on")
+	if len(ta.set) != 1 || !ta.set[0] || !strings.Contains(r.panelText(), thinkText) {
+		t.Errorf("SetThinking %v, panel %q", ta.set, r.panelText())
+	}
+	r.enter("/think")
+	r.wantLine(result{}, "thinking: on")
+	r.enter("/think off")
+	if len(ta.set) != 2 || ta.set[1] || strings.Contains(r.panelText(), thinkText) {
+		t.Errorf("SetThinking %v, panel %q", ta.set, r.panelText())
+	}
+}
+
+func TestThinkCmd_BadArgumentAndAgentWithoutIt(t *testing.T) {
+	r := newRig(t)
+	r.enter("/think maybe")
+	r.wantLine(result{}, "usage: /think")
+	r.enter("/think on")
+	r.wantLine(result{}, "this agent cannot change the thinking mode")
+	if strings.Contains(r.panelText(), thinkText) {
+		t.Errorf("panel changed: %q", r.panelText())
+	}
+}
+
+func TestPanel_ThinkingEventUpdatesTheItem(t *testing.T) {
+	r := newRig(t)
+	r.events(agent.Event{Kind: agent.EvThinking, Text: "on"})
+	if !strings.Contains(r.panelText(), thinkText) {
+		t.Errorf("panel %q", r.panelText())
+	}
+	r.events(agent.Event{Kind: agent.EvThinking, Text: "off"})
+	if strings.Contains(r.panelText(), thinkText) {
+		t.Errorf("panel %q", r.panelText())
+	}
+}

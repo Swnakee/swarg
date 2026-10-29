@@ -78,6 +78,7 @@ type model struct {
 	bgTicking                         bool
 	bgTick                            func() tea.Cmd // job refresh timer; a field so tests need no timer
 	waiting                           []string       // Waiting Messages: sent, not taken by the agent yet (oldest first)
+	thinking                          bool           // the thinking mode shown in the Bottom panel
 	modelName                         string         // the Model choice shown in the Bottom panel
 	modelList                         []string       // the last model list shown by /model (for /model N)
 	speed                             float64        // the last measured Generation speed (EvSpeed)
@@ -106,7 +107,7 @@ func newModel(ctx context.Context, d Deps, clock func() time.Time) *model {
 		d.Approver.SetAuto(true)
 	}
 	m := &model{d: d, ctx: ctx, clock: clock, tick: spinTick, bgTick: bgTick, ta: ta, cv: newConv(), cur: -1,
-		outBuf: map[int][]byte{}, sc: scrollState{follow: true}, limit: d.Limit, est: true, modelName: d.Model}
+		outBuf: map[int][]byte{}, sc: scrollState{follow: true}, limit: d.Limit, est: true, modelName: d.Model, thinking: d.Think}
 	m.resize(defaultCol, 0)
 	m.rebuild(d.History)
 	return m
@@ -288,6 +289,9 @@ func (m *model) onEvents(evs eventsMsg) tea.Cmd {
 		case agent.EvDelta:
 			m.noteDelta()
 			m.delta(ev.Text)
+		case agent.EvActivity: // reasoning or tool-call arguments: counted, not shown (R-61)
+			m.noteDelta()
+			m.turn.WriteString(ev.Text)
 		case agent.EvProgress:
 			m.progDone, m.progTotal = ev.Done, ev.Total
 		case agent.EvDraining:
@@ -311,6 +315,8 @@ func (m *model) onEvents(evs eventsMsg) tea.Cmd {
 			m.bd, m.hasBd = ev.Breakdown, true
 		case agent.EvModel:
 			m.modelName = ev.Text
+		case agent.EvThinking:
+			m.thinking = ev.Text == "on"
 		case agent.EvSpeed:
 			m.speed, m.hasSpeed = ev.Speed, true
 			m.resetLive()
@@ -438,6 +444,8 @@ func (m *model) submit(line string) tea.Cmd {
 		}
 	case KindModel:
 		return m.chooseModel(c.Name)
+	case KindThink:
+		m.think(c.Name)
 	case KindTask:
 		m.submitTask(c.Text)
 	default:

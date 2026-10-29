@@ -22,6 +22,7 @@ type Palette struct {
 	Accent  string // strings and link text (teal)
 	UserBg  string // background of the user's own messages (ui package)
 	UserFg  string // text of the user's own messages, never the terminal default (ui package)
+	TaskBg  string // background of the rows inside a Task block, a little lighter than the Session (ui package)
 }
 
 // Colors is the project palette. Values are chosen to survive quantisation to the xterm
@@ -37,6 +38,7 @@ var Colors = Palette{
 	Accent:  "#5fd7af",
 	UserBg:  "#26323f",
 	UserFg:  "#e4e4e4",
+	TaskBg:  "#121212",
 }
 
 // ---------------------------------------------------------------------------

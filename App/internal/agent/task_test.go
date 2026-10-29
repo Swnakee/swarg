@@ -639,3 +639,123 @@ func TestLimit_DefaultWhenNoFunc(t *testing.T) {
 		t.Fatalf("limit = %d, want the provider's 1000", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Depth 8 (T5 N2)
+// ---------------------------------------------------------------------------
+
+// maxDepthLimits is the deepest Chain the config allows.
+const maxDepthLimits = 8
+
+// startChain plays n nested `task` calls: the Session starts level 1, each level starts the next.
+func startChain(t *testing.T, r *rig, n int) {
+	t.Helper()
+	for i := 1; i <= n; i++ {
+		r.p.next(t).toolStep("", taskCall(i, fmt.Sprintf("level %d", i)))
+	}
+}
+
+func TestTask_Depth8ChainReturnsResultsUp(t *testing.T) {
+	r := toolRig(t, newFakeTools(), tasks(TaskLimits{MaxDepth: maxDepthLimits}))
+	r.a.Submit("go")
+	startChain(t, r, maxDepthLimits)
+	for i := maxDepthLimits; i >= 1; i-- {
+		r.p.next(t).reply(fmt.Sprintf("report %d", i)) // the innermost reports first
+	}
+	r.p.next(t).reply("final")
+	wait(t, r.a)
+	started := r.rec.of(EvTaskStarted)
+	if len(started) != maxDepthLimits || started[7].Depth != maxDepthLimits {
+		t.Fatalf("TaskStarted = %d events, last depth %d, want 8 and 8", len(started), started[len(started)-1].Depth)
+	}
+	ended := r.rec.of(EvTaskEnded)
+	for i, e := range ended {
+		if want := fmt.Sprintf("t%d", maxDepthLimits-i); e.Task != want || !strings.Contains(e.Output, fmt.Sprintf("report %d", maxDepthLimits-i)) {
+			t.Fatalf("TaskEnded[%d] = %q %q, want %s with its own report", i, e.Task, e.Output, want)
+		}
+	}
+	if res := taskResultOf(t, r.a.History()); !strings.Contains(res.Content, "report 1") || strings.Contains(res.Content, "report 2") {
+		t.Fatalf("Session result = %q, want only level 1's report", res.Content)
+	}
+	assertHistoryValid(t, r.a.History())
+}
+
+func TestTask_Depth9RefusedAndToolNotOffered(t *testing.T) {
+	r := toolRig(t, newFakeTools(), tasks(TaskLimits{MaxDepth: maxDepthLimits}))
+	r.a.Submit("go")
+	for i := 1; i <= maxDepthLimits; i++ { // the Session and levels 1..7 start levels 1..8
+		c := r.p.next(t)
+		if !strings.Contains(fmt.Sprint(toolNames(c.req)), taskTool) {
+			t.Fatalf("depth %d is not offered the task Tool", i-1)
+		}
+		c.toolStep("", taskCall(i, fmt.Sprintf("level %d", i)))
+	}
+	deepest := r.p.next(t) // level 8's first request
+	if strings.Contains(fmt.Sprint(toolNames(deepest.req)), taskTool) {
+		t.Fatalf("level 8 tools = %v, want no task", toolNames(deepest.req))
+	}
+	deepest.toolStep("", taskCall(8, "level 9")) // a call anyway
+	for i := 0; i < maxDepthLimits; i++ {
+		r.p.next(t).reply("r") // level 8 gets the refusal as a ToolResult, then everyone reports
+	}
+	r.p.next(t).reply("final")
+	wait(t, r.a)
+	if n := len(r.rec.of(EvTaskStarted)); n != maxDepthLimits {
+		t.Fatalf("%d Tasks started, want 8", n)
+	}
+}
+
+func TestTask_Depth8EscStopsInnermostFirst(t *testing.T) {
+	ft := newFakeTools()
+	ft.hold("c9")
+	r := toolRig(t, ft, tasks(TaskLimits{MaxDepth: maxDepthLimits}))
+	r.a.Submit("go")
+	startChain(t, r, maxDepthLimits)
+	r.p.next(t).toolStep("", toolCall(9, toolMut, "")) // level 8 runs a tool
+	ft.waitStarted(t, "c9")
+	r.a.Interrupt()
+	wait(t, r.a)
+	ended := r.rec.of(EvTaskEnded)
+	if len(ended) != maxDepthLimits {
+		t.Fatalf("%d TaskEnded, want 8", len(ended))
+	}
+	for i, e := range ended {
+		if want := fmt.Sprintf("t%d", maxDepthLimits-i); e.Task != want || !strings.HasPrefix(e.Output, statusInterrupted) {
+			t.Fatalf("TaskEnded[%d] = %q %q, want %s interrupted", i, e.Task, e.Output, want)
+		}
+	}
+	assertHistoryValid(t, r.a.History())
+}
+
+func TestTask_Depth8StepBudgetPerLevel(t *testing.T) {
+	r := toolRig(t, newFakeTools(), tasks(TaskLimits{MaxDepth: maxDepthLimits, MaxSteps: 1}))
+	r.a.Submit("go")
+	startChain(t, r, maxDepthLimits) // every level spends its one step on the next `task` call
+	r.p.next(t).toolStep("", toolCall(9, toolRead, ""))
+	r.p.next(t).reply("final") // the levels end by the limit without a request of their own
+	wait(t, r.a)
+	ended := r.rec.of(EvTaskEnded)
+	if len(ended) != maxDepthLimits {
+		t.Fatalf("%d TaskEnded, want 8", len(ended))
+	}
+	for _, e := range ended {
+		if !strings.HasPrefix(e.Output, statusStepLimit) || !strings.HasSuffix(e.Output, "steps: 1/1") {
+			t.Fatalf("%s result = %q, want the step limit", e.Task, e.Output)
+		}
+	}
+}
+
+func TestTask_Depth8CycleGuardRefusesAncestorGoal(t *testing.T) {
+	r := toolRig(t, newFakeTools(), tasks(TaskLimits{MaxDepth: maxDepthLimits}))
+	r.a.Submit("go")
+	startChain(t, r, maxDepthLimits-1)                  // levels 1..7
+	r.p.next(t).toolStep("", taskCall(8, " LEVEL  2 ")) // level 7 repeats level 2's goal
+	for i := 0; i < maxDepthLimits-1; i++ {
+		r.p.next(t).reply("r") // level 7 after the refusal, then levels 6..1
+	}
+	r.p.next(t).reply("final")
+	wait(t, r.a)
+	if n := len(r.rec.of(EvTaskStarted)); n != maxDepthLimits-1 {
+		t.Fatalf("%d Tasks started, want 7 (the repeat refused)", n)
+	}
+}

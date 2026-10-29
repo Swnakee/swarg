@@ -156,6 +156,16 @@ CID=$(docker create ${TTY[@]+"${TTY[@]}"} --network "$NET" \
     ${CFG_ENV[@]+"${CFG_ENV[@]}"} ${TERM_ENV[@]+"${TERM_ENV[@]}"} \
     "$IMAGE" entry.sh timeout "$RUN_TIMEOUT" "${CMD[@]}") || exit 1
 docker cp "$FIXTURE_DIR/." "$CID:/work/" >/dev/null || exit 1
+# Prompt variant (T5): SWARG_PROMPT_DIR holds override/extra block files; entry.sh moves them
+# into the config dir before swarg starts, so the model never sees them in /work.
+# docker cp keeps the host owner, so a world-writable copy goes in (entry.sh must remove it).
+if [ -n "${SWARG_PROMPT_DIR:-}" ]; then
+    [ -d "$SWARG_PROMPT_DIR" ] || { say "SWARG_PROMPT_DIR is not a folder: $SWARG_PROMPT_DIR"; exit 2; }
+    BLOCKS="$(mktemp -d)/.swarg-blocks"
+    cp -R "$SWARG_PROMPT_DIR/." "$BLOCKS" && chmod -R a+rwX "$BLOCKS" || exit 1
+    docker cp "$BLOCKS" "$CID:/work/" >/dev/null || exit 1
+    rm -rf "$(dirname "$BLOCKS")"
+fi
 
 say "running: ${CMD[*]} (fixture $FIXTURE)"
 if [ ${#TTY[@]} -gt 0 ]; then

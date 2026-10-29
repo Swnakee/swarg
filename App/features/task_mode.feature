@@ -1,9 +1,9 @@
 Feature: Task mode
   A Task is the agent loop on a goal in its own history; its parent gets only the TaskResult and
-  the Session continues as if only the result had been there. Tasks nest up to a depth.
+  the Session continues as if only the result had been there. Tasks nest up to a depth (default 8).
 
   Background:
-    Given Task mode allows depth 3
+    Given Task mode allows depth 8
 
   Rule: A Task's Messages never enter its parent's history (R-37)
 
@@ -103,6 +103,26 @@ Feature: Task mode
 
   Rule: The task Tool is guarded by depth, a per-Turn cap and the repeated goal (R-39)
 
+    @S-359
+    Scenario: A chain of 8 nested Tasks returns its results up to the Session
+      Given Task mode allows depth 8
+      And the Provider starts a chain of 8 nested Tasks
+      And the 8 levels report in turn
+      And the Provider then answers "ok"
+      When the user sends "go"
+      Then the Session history has exactly 1 TaskResult
+
+    @S-360
+    Scenario: The 9th level is refused without a request
+      Given Task mode allows depth 8
+      And the Trace is recorded
+      And the Provider starts a chain of 8 nested Tasks
+      And the helper starts a Task "level 9"
+      And the 8 levels report in turn
+      And the Provider then answers "ok"
+      When the user sends "go"
+      Then the Trace holds 8 task_start records
+
     @S-310
     Scenario: At the deepest level the task Tool is not offered
       Given Task mode allows depth 1
@@ -174,6 +194,15 @@ Feature: Task mode
       And a Provider that has streamed "partial" and is still answering
       When the user interrupts the Turn
       Then the Trace holds 2 task_end records with the status "interrupted"
+
+    @S-361
+    Scenario: Esc stops a chain of 8 Tasks, every level reports it
+      Given Task mode allows depth 8
+      And the Trace is recorded
+      And the Provider starts a chain of 8 nested Tasks
+      And a Provider that has streamed "partial" and is still answering
+      When the user interrupts the Turn
+      Then the Trace holds 8 task_end records with the status "interrupted"
 
     @S-318
     Scenario: A second Esc aborts the Chain

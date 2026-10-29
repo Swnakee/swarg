@@ -32,6 +32,7 @@ const (
 	KindRename
 	KindModel
 	KindTask
+	KindThink
 )
 
 // Command is a parsed input line. Text is set for KindText, Name and On for KindBlock, Name
@@ -70,6 +71,7 @@ var commands = []cmdSpec{
 	{name: "/blocks", desc: "list the system prompt blocks", kind: KindBlocks},
 	{name: "/block", args: "on|off <name>", desc: "switch a prompt block", kind: KindBlock, parse: parseBlock},
 	{name: "/model", args: "[id|N]", desc: "choose the model (list from the server)", kind: KindModel, parse: parseModel},
+	{name: "/think", args: "[on|off]", desc: "thinking mode of the model (no argument shows it)", kind: KindThink, parse: parseThink},
 	{name: "/exit", desc: "quit swarg", kind: KindExit},
 }
 
@@ -153,6 +155,18 @@ func parseModel(f []string) (Command, error) {
 		return Command{}, errors.New("usage: /model or /model <id>")
 	}
 	c := Command{Kind: KindModel}
+	if len(f) == 2 {
+		c.Name = f[1]
+	}
+	return c, nil
+}
+
+// parseThink is /think [on|off]: no argument shows the state, one argument sets it (Name).
+func parseThink(f []string) (Command, error) {
+	if len(f) > 2 || (len(f) == 2 && f[1] != "on" && f[1] != "off") {
+		return Command{}, errors.New("usage: /think or /think on | /think off")
+	}
+	c := Command{Kind: KindThink}
 	if len(f) == 2 {
 		c.Name = f[1]
 	}

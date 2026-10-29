@@ -38,6 +38,7 @@ type Loaded struct {
 	goodSize int64 // size of the file up to the last complete record
 	maxSeq   int
 	model    string // the last Model choice line; "" = none
+	thinking bool   // the last thinking line; false = none or off
 }
 
 // MaxSeq is the highest seq the file ever used (also by cleared or compacted messages); the
@@ -52,6 +53,9 @@ func (l Loaded) Model() string {
 	}
 	return l.Header.Model
 }
+
+// Thinking is the thinking mode at the end of the Session; a file with no thinking line is off.
+func (l Loaded) Thinking() bool { return l.thinking }
 
 // Messages returns the replayed history (each message carries its Seq).
 func (l Loaded) Messages() []chat.Message {
@@ -153,6 +157,8 @@ func (l *Loaded) apply(r record) error {
 		}
 	case r.Name != "":
 		l.Name = r.Name // the last Name wins; the history is untouched (I-11)
+	case r.Think != nil:
+		l.thinking = *r.Think
 	case r.Model != "": // a Model choice (only the header line has V set)
 		l.model = r.Model
 	}

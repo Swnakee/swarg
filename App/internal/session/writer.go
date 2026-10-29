@@ -214,6 +214,13 @@ func (w *Writer) Model(name string) error {
 	return w.write(record{Model: name})
 }
 
+// Thinking records a thinking mode switch; the last one wins on replay.
+func (w *Writer) Thinking(on bool) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.write(record{Think: &on})
+}
+
 // Flush forces the file to stable storage.
 func (w *Writer) Flush() error {
 	w.mu.Lock()

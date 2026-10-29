@@ -55,6 +55,7 @@ type Opened struct {
 	History []chat.Message
 	MaxSeq  int
 	Model   string
+	Think   bool // the thinking mode at the end of the session (R-60)
 	Title   string
 }
 
@@ -90,6 +91,9 @@ type (
 	modelSetter interface {
 		SetModel(name string) error
 	} // /model, the Bottom panel's model item (the test fakes lack it)
+	thinker interface {
+		SetThinking(on bool)
+	} // /think
 	taskSubmitter interface {
 		SubmitTask(goal string) error
 	} // /task
@@ -110,6 +114,7 @@ type Deps struct {
 	Models      ModelsAPI      // optional: the model list of /model
 	History     []chat.Message // optional: the list is pre-filled from it at startup (a resumed session)
 	SavedHint   string         // optional: main prints it after Run returns (e.g. "session saved: swarg --continue"); the UI prints nothing
+	Think       bool           // the thinking mode at start; EvThinking events update the Bottom panel
 	Model       string         // the Model choice at start; EvModel events update the Bottom panel
 	Project     string
 	Limit       int

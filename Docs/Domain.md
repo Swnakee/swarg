@@ -25,7 +25,7 @@ A new domain term is added here before it appears in code, scenarios or docs.
 | Provider | A model backend the core streams completions from (local mlx, later OpenRouter); reached only through the `agent.Provider` interface | backend, client, API | `Provider` |
 | StreamEvent | One event of a streamed completion: text, prefill progress, usage, or the final done | chunk, token | `chat.StreamEvent` |
 | SystemPrompt | The first message of every request, assembled from Blocks | preamble, instructions | `prompt.Set.Build` |
-| Block | One switchable piece of the SystemPrompt (base, global `NN-name.md`, project `SWARG.md`, env) | snippet, section, part | `prompt.Block` |
+| Block | One switchable piece of the SystemPrompt (base, global `NN-name.md`, project `SWARG.md`, env, tool blocks); a `<name>.md` override file replaces a built-in one (R-49) | snippet, section, part | `prompt.Block` |
 | BackgroundJob | A shell command that outlives the ToolCall that started it; read and killed later by id (`bg1`, `bg2`, ...); not a Task (agent work) | daemon, task, process | `tools.Jobs` / `tools.JobInfo` |
 | Detach | The user's move of the running detachable ToolCall to the background; the call returns at once and its command becomes a BackgroundJob | suspend, push to bg | `ToolHooks.Detach`, `Agent.Background` |
 | Mod | An external process that extends swarg through the JSON protocol | plugin, extension | `Mod` |
@@ -48,6 +48,7 @@ A new domain term is added here before it appears in code, scenarios or docs.
 | Bottom panel | The row under the input box: model, context use, speed, auto-approve, background jobs | status bar, footer | `ui model.panelLine` |
 | Generation speed | Completion tokens per second of one Step, from the first generated token to the end of the stream | tps, throughput | `agent.EvSpeed` |
 | Model choice | The model id requests name; chosen from the Provider's list, may change in the middle of a Session | model switch | `Agent.SetModel`, `agent.EvModel` |
+| Thinking mode | On or off: with it on every request asks the model to think (`enable_thinking`), uses the thinking sampling and a larger output limit; off by default; switched with `/think` | reasoning switch, think flag | `Agent.SetThinking`, `agent.EvThinking`, `config.Provider.Thinking` |
 | Suggestion | A command offered above the input while its name is being typed; Tab or a click completes it | autocomplete, hint, popup | `ui.suggestions`, `model.completeSuggestion` |
 | Task | One goal worked on by the agent loop in its own history, started by a `task` ToolCall of a Session Turn or of another Task (its parent), ending in a TaskResult; the goal text is its TurnStart; not a BackgroundJob (a process) | sub-agent, job, thread, subtask | `agent.conversation` (depth >= 1), `agent.runTask` |
 | TaskResult | The one text a Task returns to its parent: a status line (`done; files: ...`), the model's report and `steps: N/M`; stored as the ToolResult of the `task` ToolCall | summary, output, return value | `agent.taskResult` |
@@ -136,6 +137,24 @@ Rules are numbered `R-n`; each one gets BDD scenarios (normal, boundary, failure
   Session continues with its last chosen model unless `--model` is given (then that choice is
   recorded). A blank model id is refused; choosing the model in use changes and records nothing. The
   ContextLimit follows the model (R-41).
+- R-60 The Thinking mode is used from the next model request on (also inside a running Turn). On:
+  `chat_template_kwargs.enable_thinking` true, temperature 0.6, top_p 0.95, top_k 20, min_p 0,
+  presence_penalty 0, and `max_tokens` = `thinking_max_tokens` (default 8192); off: the request is
+  exactly as before. `/think on|off` switches it, `/think` shows it, a bad argument is a usage
+  notice; the mode in use changes and records nothing. The config `thinking` (default false) is the
+  start mode of a new Session. The Bottom panel shows `think` while it is on.
+- R-61 Every streamed chunk is reported to the UI while it arrives: visible text as a Delta,
+  reasoning and tool-call arguments as Activity. The Progress line's token counter and live speed
+  count all of them; Activity text is never shown or stored. (mlx_lm.server sends a tool call in
+  one chunk at the end of the generation, so a silent server is still silent; other servers stream
+  the arguments.)
+- R-62 A running Task's block is open: its tool calls, nested Tasks and text show as they start,
+  with the depth gutter and a background a little lighter than the Session. When the Task ends the
+  block folds to its one-line summary (head + result line); a click or /tool N opens it again.
+- R-63 A stream with no bytes for the provider's idle limit (`idle_timeout_s`, default 600 s) ends
+  with the idle error. The limit must cover a long silent generation: mlx_lm.server sends a tool
+  call in one chunk at the end, so a client cannot tell a slow tool call from a stopped server;
+  Esc aborts at once meanwhile.
 - R-31 The Bottom panel shows exactly: model, context use (percent and tokens), Generation speed,
   auto-approve state, running background jobs (only when > 0: nothing extra when idle), plus a
   transient `copied N lines`. A click on the model
@@ -164,7 +183,7 @@ Rules are numbered `R-n`; each one gets BDD scenarios (normal, boundary, failure
   Task inside it); then the report (the final text, else the list of its steps), then `steps: N/M`.
   The first line is also the Brief of the ToolResult, so a Compaction of the parent keeps the status
   and the files. A failed Task is an error ToolResult and the parent Turn goes on (T4 task).
-- R-39 The `task` Tool is offered only while the Depth is below `tasks.max_depth` (0 = no Tasks); one
+- R-39 The `task` Tool is offered only while the Depth is below `tasks.max_depth` (default 8, allowed 0..8, 0 = no Tasks; a 9th level cannot be configured); one
   Session Turn runs at most `tasks.max_per_turn` Tasks over its whole Chain; a goal that repeats the
   goal of a running ancestor or the Turn's own request, or an empty goal, is refused with an error
   ToolResult and no model request (the `/task` goal is exempt from the repeat check) (T4 task).
@@ -204,6 +223,10 @@ Rules are numbered `R-n`; each one gets BDD scenarios (normal, boundary, failure
 - R-48 The note in a cut tool result names what gets the rest back: for command output "rerun with a
   filter (grep, head, tail)", for files and other results "use read_file offset/limit or grep"
   (T4 tools).
+- R-49 A file `<name>.md` in the global blocks folder, named after a built-in Block (`base` or a
+  `tool-<name>` block), replaces that Block's text (global `NN-name` Blocks are not replaceable); the Block keeps its order and on/off state, and
+  the replacement is reported as a warning at start. `project`, `env` and unknown names are not
+  replaced (warning). This is how prompt variants are compared on one build (T5 prompts).
 
 ## Invariants
 
@@ -223,6 +246,8 @@ Invariants are numbered `I-n`; each one is a test target.
   never lost and never doubled, in send order.
 - I-9 Every model request names the model chosen when it was built; replaying the SessionFile gives
   the same last model as the live agent.
+- I-30 Every thinking switch is recorded in the SessionFile; a resumed Session continues in the last
+  recorded mode, a file with no thinking line (older swarg) resumes with thinking off.
 - I-10 Moving the pointer changes nothing but the look: no scroll, no selection, no toggle, nothing
   reaches the agent (T3 ui).
 - I-12 The SessionFile replays to the parent history with the TaskResults and without the Tasks'

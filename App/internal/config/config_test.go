@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -35,9 +36,9 @@ func TestDefaults_MatchSpec(t *testing.T) {
 		p.Model != "mlx-community/Qwen3.5-4B-4bit" || p.ContextLimit != 16384 || p.MaxTokens != 2048 {
 		t.Fatalf("unexpected provider defaults: %+v", p)
 	}
-	ctargs, ok := p.ExtraBody["chat_template_args"].(map[string]any)
+	ctargs, ok := p.ExtraBody["chat_template_kwargs"].(map[string]any)
 	if !ok || ctargs["enable_thinking"] != false {
-		t.Fatalf("extra_body = %v, want chat_template_args.enable_thinking=false", p.ExtraBody)
+		t.Fatalf("extra_body = %v, want chat_template_kwargs.enable_thinking=false", p.ExtraBody)
 	}
 	if c.Prompt.WarnShare != 0.25 {
 		t.Fatalf("warn_share = %v, want 0.25", c.Prompt.WarnShare)
@@ -533,7 +534,7 @@ func TestContextLimits_Validate(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTasks_Defaults(t *testing.T) {
-	want := Tasks{MaxDepth: 3, MaxSteps: 15, MaxPerTurn: 8}
+	want := Tasks{MaxDepth: 8, MaxSteps: 15, MaxPerTurn: 8}
 	if got := Defaults().Tasks; got != want {
 		t.Fatalf("tasks defaults = %+v, want %+v", got, want)
 	}
@@ -577,5 +578,62 @@ func TestTasks_PartialObjectKeepsDefaults(t *testing.T) {
 	want := Tasks{MaxDepth: 2, MaxSteps: 15, MaxPerTurn: 8}
 	if c.Tasks != want {
 		t.Fatalf("tasks = %+v, want %+v", c.Tasks, want)
+	}
+}
+
+func TestThinking_DefaultOffAndPreset(t *testing.T) {
+	p := Defaults().Active()
+	if p.Thinking {
+		t.Error("thinking must be off by default")
+	}
+	if p.ThinkingLimit() != 8192 {
+		t.Errorf("limit %d, want 8192", p.ThinkingLimit())
+	}
+	b := p.ThinkingBody()
+	args, _ := b["chat_template_kwargs"].(map[string]any)
+	if args["enable_thinking"] != true || b["temperature"] != 0.6 || b["top_p"] != 0.95 || b["presence_penalty"] != 0.0 {
+		t.Errorf("preset %v", b)
+	}
+}
+
+func TestLoad_ThinkingFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := `{"provider":"local","providers":{"local":{"type":"openai","base_url":"http://127.0.0.1:8080/v1","model":"m","context_limit":8000,"max_tokens":512,"thinking":true,"thinking_max_tokens":4000}}}`
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := c.Active(); !p.Thinking || p.ThinkingLimit() != 4000 {
+		t.Errorf("provider %+v", p)
+	}
+	bad := `{"provider":"local","providers":{"local":{"type":"openai","base_url":"http://127.0.0.1:8080/v1","model":"m","context_limit":8000,"max_tokens":512,"thinking_max_tokens":-1}}}`
+	os.WriteFile(path, []byte(bad), 0o600)
+	if _, err := Load(path, true); err == nil {
+		t.Error("a negative thinking_max_tokens was accepted")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Idle timeout of a provider (R-63)
+// ---------------------------------------------------------------------------
+
+func TestProvider_IdleTimeoutDefault(t *testing.T) {
+	if got := Defaults().Active().IdleTimeout(); got != 600*time.Second {
+		t.Errorf("default idle timeout = %v, want 10m (a long silent tool call at ~6 tok/s)", got)
+	}
+}
+
+func TestProvider_IdleTimeoutFromFile(t *testing.T) {
+	path := writeConfig(t, `{"providers": {"local": {"type": "openai", "base_url": "http://10.1.2.3:9000/v1",
+		"model": "m", "context_limit": 4096, "max_tokens": 512, "idle_timeout_s": 30}}}`)
+	got, err := Load(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := got.Active().IdleTimeout(); d != 30*time.Second {
+		t.Errorf("idle timeout from the file = %v, want 30s", d)
 	}
 }

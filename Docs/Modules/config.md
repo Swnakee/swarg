@@ -3,10 +3,10 @@
 Purpose: load and validate the swarg config file (`config.json` in `Dir()`). Stdlib only.
 
 API:
-- `Provider{Type, BaseURL, Model, ContextLimit, ContextLimits, MaxTokens, APIKeyEnv, ExtraBody}` - one model server (JSON tags as in the file).
+- `Provider{Type, BaseURL, Model, ContextLimit, ContextLimits, MaxTokens, APIKeyEnv, ExtraBody, Thinking, ThinkingMaxTokens}` - one model server (JSON tags as in the file).
 - `Provider.ContextLimits map[string]int` (JSON `context_limits`, omitted when empty) - per-model context limit, model id -> tokens, each value > 0 (checked for the active provider). Not set in `Defaults()`.
 - `(Provider) LimitFor(model string) int` - the limit of one model: the file's `context_limits` entry, else the built-in table `defaultLimits` (the Qwen3.5 ids `0.8B`/`2B`/`4B`/`9B` `-4bit` and the fine-tunes `Huihui-Qwen3.5-4B-...-4bit`, `MiMo-V2.6-Distill-Qwen-9B-OptiQ-4bit` -> 32768), else `ContextLimit`.
-- `Tasks{MaxDepth, MaxSteps, MaxPerTurn}` (JSON `tasks`) - the Task mode limits (nested sub-tasks of the agent): defaults 3, 15, 8. `max_depth` 0..8 (0 = Tasks off), `max_steps` 1..200, `max_per_turn` 1..50. A partial object keeps the other defaults.
+- `Tasks{MaxDepth, MaxSteps, MaxPerTurn}` (JSON `tasks`) - the Task mode limits (nested sub-tasks of the agent): defaults 8, 15, 8. `max_depth` 0..8 (0 = Tasks off), `max_steps` 1..200, `max_per_turn` 1..50. A partial object keeps the other defaults.
 - `Prompt{WarnShare}` - prompt settings, default 0.25.
 - `Tools{Disabled, MaxSteps, ShellTimeoutSec, AutoApprove}` - tool settings (JSON `tools`), defaults `[]`, 25, 120, false.
 - `Web{Confirm, SearxURL, AllowPrivate, TimeoutSec}` (JSON `web`) - web tools: defaults true, "", false, 15; `timeout_sec` 1..120, `searx_url` empty or an http(s) URL; `confirm: false` frees `web_search`/`web_fetch` from approval (R-45); `allow_private` lets `web_fetch` reach private addresses (R-47).
@@ -50,6 +50,9 @@ Flags: `--config`, `--model`, `--base-url`, `--yes`, `--version`, plus
 - `--no-save` no SessionFile (and no Trace); `--trace-off` no Trace.
 Subcommand `swarg trace [id]` (os.Args[1] == "trace", before flag parsing): prints `trace.Timeline` of the session (id prefix) or the newest of this project; no trace file is exit 1; extra arguments are exit 2.
 Exit codes: 0 ok, 1 runtime error (also unknown session id), 2 config or flag error.
+
+Thinking (R-60): `Provider.Thinking` (default false) is the start mode of a NEW session; a resumed one uses `session.Loaded.Thinking()` (absent = off, I-30), passed as `agent.WithThinking`. `Provider.ThinkingBody()` (built-in Qwen preset, laid over `ExtraBody` by the agent as `Deps.ThinkExtra`; nested `chat_template_kwargs` merged) and `ThinkingLimit()` (`thinking_max_tokens`, 0 = 8192, negative is invalid; `Deps.ThinkTokens`; a larger `max_tokens` is kept); a resumed session without a think line starts off even if the config says `thinking: true`. `swStore.Thinking` forwards to the writer of the moment. Old configs without the fields behave as before.
+Idle timeout (R-63): `Provider.IdleTimeoutSec` (`idle_timeout_s`, 0 = 600 s) via `IdleTimeout()`; main sets `openai.Client.IdleTimeout` from it. Long because mlx_lm.server sends a tool call in one chunk at the end of the generation.
 
 Model at start (`startModel`, R-30): `--model` > the resumed session's last model (`session.Loaded.Model`) > config/`SWARG_MODEL`. The agent starts with the session's own model and main then calls `SetModel(model)`, so a `--model` over a resumed session is recorded. `onModel` wraps `OnEvent`: an `EvModel` first rewrites the prompt env block (`prompt.Set.SetModel`). `Health` checks `a.Model()`. `ui.Deps.Models = modelsView{client}` (`openai.Client.Models`).
 

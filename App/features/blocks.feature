@@ -49,3 +49,24 @@ Feature: SystemPrompt Blocks
       Given a working directory without a SWARG.md
       When the user submits "Hi"
       Then the SystemPrompt sent to the Provider contains the base Block
+
+  Rule: A file named after a built-in Block in the blocks folder replaces that Block's text
+
+    @S-362
+    Scenario: A base override file replaces the base Block
+      Given a global Block "base" with the text "Custom base rules"
+      When the user submits "Hi"
+      Then the SystemPrompt sent to the Provider contains "Custom base rules" instead of the base Block
+
+    @S-363
+    Scenario: A tool override file replaces that tool's Block
+      Given Task mode allows depth 1
+      And a global Block "tool-task" with the text "task: custom description"
+      When the user submits "Hi"
+      Then the SystemPrompt sent to the Provider contains "task: custom description"
+
+    @S-364
+    Scenario: An override file for an unknown Block is ignored
+      Given a global Block "tool-nope" with the text "Nope text"
+      When the user submits "Hi"
+      Then the SystemPrompt sent to the Provider does not contain "Nope text"

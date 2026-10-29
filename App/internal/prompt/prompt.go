@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 
 	"strconv"
@@ -85,12 +87,14 @@ type Set struct {
 // Load builds the set: base (embedded base.md) + global NN-name.md files from
 // globalDir (a missing dir means none) + SWARG.md from cwd only + the env block
 // + the extra blocks (for example tool blocks), enabled and added as given.
-// Entries that do not match ^\d{2}-[a-z0-9_-]+\.md$ are skipped and reported in
+// A <name>.md file in globalDir replaces the text of the base or tool Block of that name
+// (global, project and env Blocks cannot be replaced) and is reported in warnings (R-49).
+// Other entries that do not match ^\d{2}-[a-z0-9_-]+\.md$ are skipped and reported in
 // warnings. A duplicate name (including base, project, env and extra) is an error.
 func Load(globalDir, cwd string, env Env, extra ...Block) (set *Set, warnings []string, err error) {
 	blocks := []Block{{Name: nameBase, Source: SourceBase, Order: orderBase, Text: baseText, Enabled: true}}
 
-	global, warnings, err := loadGlobal(globalDir)
+	global, overrides, warnings, err := loadGlobal(globalDir)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -112,6 +116,16 @@ func Load(globalDir, cwd string, env Env, extra ...Block) (set *Set, warnings []
 	for _, b := range extra {
 		b.Enabled = true
 		blocks = append(blocks, b)
+	}
+	for _, name := range slices.Sorted(maps.Keys(overrides)) { // sorted: stable warnings
+		path := filepath.Join(globalDir, name+".md")
+		i := slices.IndexFunc(blocks, func(b Block) bool { return b.Name == name })
+		if i < 0 || (blocks[i].Source != SourceBase && blocks[i].Source != SourceTool) {
+			warnings = append(warnings, fmt.Sprintf("prompt: skipped %s: not an NN-name.md file or a replaceable Block", path))
+			continue
+		}
+		blocks[i].Text = overrides[name]
+		warnings = append(warnings, fmt.Sprintf("prompt: block %q replaced by %s", name, path))
 	}
 
 	sort.Slice(blocks, func(i, j int) bool {
@@ -136,31 +150,38 @@ func checkUnique(blocks []Block) error {
 	return nil
 }
 
-// loadGlobal reads the NN-name.md files of globalDir. It returns the blocks and
-// a warning for every other entry.
-func loadGlobal(dir string) (blocks []Block, warnings []string, err error) {
+// loadGlobal reads globalDir: NN-name.md files become blocks, plain name.md files are
+// override candidates (stem -> text, resolved by Load); every other entry gets a warning.
+func loadGlobal(dir string) (blocks []Block, overrides map[string]string, warnings []string, err error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("prompt: read dir %s: %w", dir, err)
+		return nil, nil, nil, fmt.Errorf("prompt: read dir %s: %w", dir, err)
 	}
 	pattern := regexp.MustCompile(`^(\d{2})-([a-z0-9_-]+)\.md$`)
+	plain := regexp.MustCompile(`^([a-z0-9_-]+)\.md$`)
+	overrides = map[string]string{}
 	for _, e := range entries {
 		m := pattern.FindStringSubmatch(e.Name())
-		if e.IsDir() || m == nil {
+		o := plain.FindStringSubmatch(e.Name())
+		if e.IsDir() || (m == nil && o == nil) {
 			warnings = append(warnings, fmt.Sprintf("prompt: skipped %s: not an NN-name.md file", filepath.Join(dir, e.Name())))
 			continue
 		}
-		order, _ := strconv.Atoi(m[1]) // the regexp guarantees two digits
 		text, err := readText(filepath.Join(dir, e.Name()))
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
+		if m == nil {
+			overrides[o[1]] = text
+			continue
+		}
+		order, _ := strconv.Atoi(m[1]) // the regexp guarantees two digits
 		blocks = append(blocks, Block{Name: m[2], Source: SourceGlobal, Order: order, Text: text, Enabled: true})
 	}
-	return blocks, warnings, nil
+	return blocks, overrides, warnings, nil
 }
 
 // readText reads a file and normalizes CRLF line endings to LF.

@@ -167,11 +167,11 @@ func TestClient_RequestBody(t *testing.T) {
 		},
 		MaxTokens: 100,
 		Extra: map[string]any{
-			"chat_template_args": map[string]any{"enable_thinking": false},
-			"temperature":        0.2,
-			"model":              "evil",
-			"messages":           "evil",
-			"stream":             false,
+			"chat_template_kwargs": map[string]any{"enable_thinking": false},
+			"temperature":          0.2,
+			"model":                "evil",
+			"messages":             "evil",
+			"stream":               false,
 		},
 	}
 	streamAll(t, c, req)
@@ -191,8 +191,8 @@ func TestClient_RequestBody(t *testing.T) {
 	if b["max_tokens"] != float64(100) || b["temperature"] != 0.2 {
 		t.Errorf("max_tokens/temperature = %v/%v", b["max_tokens"], b["temperature"])
 	}
-	if ct, _ := b["chat_template_args"].(map[string]any); ct["enable_thinking"] != false {
-		t.Errorf("chat_template_args = %v", b["chat_template_args"])
+	if ct, _ := b["chat_template_kwargs"].(map[string]any); ct["enable_thinking"] != false {
+		t.Errorf("chat_template_kwargs = %v", b["chat_template_kwargs"])
 	}
 	msgs, _ := b["messages"].([]any)
 	if len(msgs) != 2 {
@@ -756,5 +756,31 @@ func TestChat_NewFieldsNotOnTheWire(t *testing.T) {
 	}
 	if string(got) != string(want) {
 		t.Errorf("new fields changed the wire JSON:\n got  %s\n want %s", got, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Streamed tool-call arguments are reported (R-61)
+// ---------------------------------------------------------------------------
+
+func TestStream_ToolArgsEmitToolDelta(t *testing.T) {
+	call := chat.ToolCall{ID: "c1", Name: "write_file", Args: `{"path":"a.txt","content":"hello world"}`}
+	srv := llmtest.New(t, llmtest.Reply{ToolCalls: []chat.ToolCall{call}, SplitArgs: true})
+	evs := streamAll(t, New(srv.URL, "", nil), chat.Request{Model: "m", Messages: []chat.Message{{Role: chat.RoleUser, Content: "go"}}})
+
+	var args strings.Builder
+	n := 0
+	for _, ev := range evs {
+		if ev.Kind == chat.EventToolDelta {
+			n++
+			args.WriteString(ev.Text)
+		}
+	}
+	if n < 2 || args.String() != call.Args {
+		t.Errorf("%d EventToolDelta with text %q, want 3 chunks concatenating to %q", n, args.String(), call.Args)
+	}
+	last := evs[len(evs)-1]
+	if last.Kind != chat.EventDone || len(last.ToolCalls) != 1 || last.ToolCalls[0].Args != call.Args {
+		t.Errorf("EventDone = %+v, want the complete call", last)
 	}
 }

@@ -91,3 +91,21 @@ func TestStore_Model(t *testing.T) {
 		t.Errorf("model %q", l.Model())
 	}
 }
+
+func TestLoad_ThinkingLastWinsAndDefaultsOff(t *testing.T) {
+	w := newWriter(t)
+	msg(t, w, user("a"))
+	if loadOK(t, w.Path()).Thinking() {
+		t.Error("a file without a thinking line must be off")
+	}
+	w.Thinking(true)
+	w.Thinking(false)
+	w.Thinking(true)
+	if !loadOK(t, w.Path()).Thinking() {
+		t.Error("the last line (on) must win")
+	}
+	lines := readLines(t, w.Path())
+	if got := lines[len(lines)-1]; got != `{"think":true}` {
+		t.Errorf("line %s", got)
+	}
+}

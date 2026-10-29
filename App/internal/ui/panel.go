@@ -51,6 +51,9 @@ func (m *model) panelItems() []panelItem {
 		{text: m.speedText()},
 		{text: auto},
 	}
+	if m.thinking {
+		items = append(items, panelItem{text: thinkText})
+	}
 	if m.bgRunning > 0 {
 		items = append(items, panelItem{text: fmt.Sprintf("%s %d bg", glyphBg, m.bgRunning), id: spotJobs})
 	}

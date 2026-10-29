@@ -2,8 +2,11 @@
 # ---------------------------------------------------------------------------
 # swarg agent evaluation: run tasks one by one in the e2e sandbox, check, report.
 #
-# Usage: run.sh [-m model] [-l] [task-glob ...]
+# Usage: run.sh [-m model] [-p prompt-dir] [-l] [task-glob ...]
 #   -m model   model id (default: $SWARG_MODEL or mlx-community/Qwen3.5-2B-4bit)
+#   -p dir     prompt variant: block files (NN-name.md adds, <block>.md replaces, R-49) installed
+#              as the blocks dir inside the sandbox (default: $SWARG_PROMPT_DIR); the run dir
+#              name gets "-<dirname>"; see prompts/
 #   -l         list the tasks and exit
 #   task-glob  shell patterns matched against task directory names (edit-*, shell-01*);
 #              no patterns = all tasks
@@ -25,6 +28,7 @@ LIST=0
 while [ $# -gt 0 ]; do
     case "$1" in
         -m) MODEL="${2:?-m needs a model}"; shift 2 ;;
+        -p) SWARG_PROMPT_DIR="${2:?-p needs a folder}"; shift 2 ;;
         -l) LIST=1; shift ;;
         -*) echo "unknown option $1" >&2; exit 2 ;;
         *) break ;;
@@ -76,6 +80,11 @@ say "model ok: $MODEL; ${#TASKS[@]} task(s)"
 # ---------------------------------------------------------------------------
 
 SLUG="$(printf '%s' "${MODEL##*/}" | tr -c 'A-Za-z0-9._-' '_')"
+if [ -n "${SWARG_PROMPT_DIR:-}" ]; then
+    [ -d "$SWARG_PROMPT_DIR" ] || { echo "prompt dir not found: $SWARG_PROMPT_DIR" >&2; exit 2; }
+    SWARG_PROMPT_DIR="$(cd "$SWARG_PROMPT_DIR" && pwd)"; export SWARG_PROMPT_DIR
+    SLUG="$SLUG-$(basename "$SWARG_PROMPT_DIR")"
+fi
 RUN="$ROOT/Export/eval/$(date +%Y%m%d-%H%M%S)-$SLUG"
 mkdir -p "$RUN/runs"
 : > "$RUN/results.jsonl"

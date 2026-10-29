@@ -13,6 +13,7 @@ type EventKind int
 const (
 	EvTurnStarted EventKind = iota + 1
 	EvDelta
+	EvActivity // a streamed chunk that is not visible text: reasoning or tool-call arguments (R-61)
 	EvProgress
 	EvDraining
 	EvTurnEnded
@@ -27,8 +28,9 @@ const (
 	EvCompactStarted // a Compaction began: Spans = WorkSpans it will look at, Before = estimated tokens of the next request
 	EvCompacted      // a Compaction ended (always follows EvCompactStarted): Spans replaced, Before and After estimated tokens
 
-	EvModel // the Model choice changed (SetModel, Load WithModel): Text = the model id
-	EvSpeed // a Step's stream ended with a measured Generation speed: Speed
+	EvModel    // the Model choice changed (SetModel, Load WithModel): Text = the model id
+	EvThinking // the thinking mode changed (SetThinking, Load WithThinking): Text = "on" or "off"
+	EvSpeed    // a Step's stream ended with a measured Generation speed: Speed
 
 	EvTaskStarted // a Task began: Task = its id, Depth, Text = the goal, Call = the `task` call
 	EvTaskEnded   // a Task ended: Task = its id, Brief = line 1 of the TaskResult, Output = the whole result
@@ -40,7 +42,7 @@ type Event struct {
 	Kind        EventKind
 	Task        string            // the Task id of the loop that emitted it; "" = the Session
 	Depth       int               // TaskStarted: the Task's depth (1 = started by the Session)
-	Text        string            // TurnStarted, UserText: user text; Delta, ToolOutput: chunk; Warning: message; TaskStarted: goal
+	Text        string            // TurnStarted, UserText: user text; Delta, Activity, ToolOutput: chunk; Warning: message; TaskStarted: goal
 	Done, Total int               // Progress
 	Message     chat.Message      // TurnEnded: stored assistant message (zero if none)
 	Finish      chat.FinishReason // TurnEnded

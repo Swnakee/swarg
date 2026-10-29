@@ -14,6 +14,8 @@ export HOME=/tmp/home
 export XDG_CONFIG_HOME=/tmp/home/.config
 mkdir -p "$XDG_CONFIG_HOME"
 if [ -n "$SRC_CFG" ] && [ -d "$SRC_CFG/swarg" ]; then cp -R "$SRC_CFG/swarg" "$XDG_CONFIG_HOME/"; fi
+# SWARG_EVAL_CONFIG (eval.py prep) replaces the config; it must keep tools.auto_approve true
+if [ -f "$T/config.json" ]; then mkdir -p "$XDG_CONFIG_HOME/swarg" && cp "$T/config.json" "$XDG_CONFIG_HOME/swarg/config.json"; fi
 
 cd /work || exit 1
 : > "$T/output.txt"

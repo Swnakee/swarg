@@ -1,9 +1,12 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"swarg/internal/ui/mdstream"
 )
 
 // ---------------------------------------------------------------------------
@@ -16,6 +19,30 @@ const interruptedText = "interrupted"
 const taskGutter = "  │ "
 
 var gw = ansi.StringWidth(taskGutter)
+
+// taskBgSeq is the SGR that paints the Task background with a fixed text colour (a painted cell
+// never keeps the terminal's own foreground, like the user's messages), R-62; every reset inside
+// a row is followed by it again, so the background covers the whole row.
+var taskBgSeq = rgbSeq(48, mdstream.Colors.TaskBg) + rgbSeq(38, mdstream.Colors.UserFg)
+
+// rgbSeq is the true-colour SGR of a "#rrggbb" colour: param 38 = foreground, 48 = background
+// (the output downsamples it to the terminal's profile).
+func rgbSeq(param int, hex string) string {
+	var r, g, b int
+	fmt.Sscanf(hex, "#%02x%02x%02x", &r, &g, &b)
+	return fmt.Sprintf("\x1b[%d;2;%d;%d;%dm", param, r, g, b)
+}
+
+// taskBgAfterReset re-applies the Task background after both reset forms (lipgloss emits the
+// short one, glamour the long one).
+var taskBgAfterReset = strings.NewReplacer("\x1b[0m", "\x1b[0m"+taskBgSeq, resetSGR, resetSGR+taskBgSeq)
+
+// withTaskBackground paints row with the Task background up to width cells.
+func withTaskBackground(row string, width int) string {
+	row = taskBgAfterReset.Replace(row)
+	pad := max(width-ansi.StringWidth(row), 0)
+	return taskBgSeq + row + strings.Repeat(" ", pad) + resetSGR
+}
 
 // itemRows returns the cache of item i, rendering the item when the key
 // (width, open, hidden, version, frame) changed. Every row is at most c.width cells wide; an item
@@ -49,7 +76,7 @@ func (c *conv) itemRows(i int) *itemCache {
 		if it.depth > 0 {
 			gut := outStyle.Render(strings.Repeat(taskGutter, it.depth))
 			for r := range ch.rows {
-				ch.rows[r], ch.lead[r] = gut+ch.rows[r], ch.lead[r]+it.depth*gw
+				ch.rows[r], ch.lead[r] = withTaskBackground(gut+ch.rows[r], c.width), ch.lead[r]+it.depth*gw
 			}
 		}
 	}

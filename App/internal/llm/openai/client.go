@@ -23,7 +23,7 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	defaultIdleTimeout = 120 * time.Second
+	defaultIdleTimeout = 600 * time.Second // a tool call comes in one chunk at the end of the generation (R-63)
 	healthTimeout      = 30 * time.Second
 	errorSnippetBytes  = 512
 )
@@ -357,6 +357,11 @@ func (p *pumper) chunk(data string) error {
 		}
 		for _, d := range first.Delta.ToolCalls {
 			p.addCall(d)
+			if d.Function.Arguments != "" {
+				if err := p.emit(chat.StreamEvent{Kind: chat.EventToolDelta, Text: d.Function.Arguments}); err != nil {
+					return err
+				}
+			}
 		}
 		if first.FinishReason != nil {
 			p.finish = finishOf(*first.FinishReason)

@@ -788,3 +788,53 @@ func TestAgent_OnEventNil(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// An answer that cost tokens but arrived empty (mlx_lm.server drops a tool call the model did not
+// close with </tool_call>, T5 M1) asks the model again, once.
+func TestAgent_EmptyAnswerWithTokensAsksTheModelAgain(t *testing.T) {
+	r := startRig(t)
+	r.a.Submit("hi")
+	c := r.p.next(t)
+	c.usage(100, 25)
+	c.end(chat.FinishStop, nil)
+	c = r.p.next(t)
+	if last := c.req.Messages[len(c.req.Messages)-1]; last.Role != chat.RoleUser || !strings.Contains(last.Content, droppedNudge) {
+		t.Fatalf("last request message = %+v", last)
+	}
+	c.reply("done")
+	wait(t, r.a)
+	if w := r.rec.texts(EvWarning); len(w) != 1 || w[0] != droppedWarning {
+		t.Fatalf("warnings = %q", w)
+	}
+	if end := r.rec.of(EvTurnEnded); end[0].Message.Content != "done" {
+		t.Fatalf("TurnEnded = %+v", end[0])
+	}
+}
+
+// A truly empty answer (only the end token) ends the Turn as before.
+func TestAgent_EmptyAnswerOfOneTokenIsNoNudge(t *testing.T) {
+	r := startRig(t)
+	r.a.Submit("hi")
+	c := r.p.next(t)
+	c.usage(100, 1)
+	c.end(chat.FinishStop, nil)
+	wait(t, r.a)
+	if w := r.rec.texts(EvWarning); len(w) != 1 || w[0] != "empty answer" {
+		t.Fatalf("warnings = %q", w)
+	}
+}
+
+// A second dropped answer ends the Turn with the stop note only (no extra "empty answer").
+func TestAgent_EmptyAnswerWithTokensTwiceEndsTheTurn(t *testing.T) {
+	r := startRig(t)
+	r.a.Submit("hi")
+	for i := 0; i < 2; i++ {
+		c := r.p.next(t)
+		c.usage(100, 25)
+		c.end(chat.FinishStop, nil)
+	}
+	wait(t, r.a)
+	if w := r.rec.texts(EvWarning); len(w) != 2 || w[0] != droppedWarning || w[1] != droppedStop {
+		t.Fatalf("warnings = %q", w)
+	}
+}

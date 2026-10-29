@@ -4,6 +4,7 @@
   eval.py prep <task_dir> <dest_dir>       build the fixture copy for one task
   eval.py collect <task> <e2e_out_dir> <jsonl>   parse one finished run, append a JSON line
   eval.py report <run_dir> <model>         results.jsonl -> report.md + results.csv
+  eval.py compare <run_a> <run_b>          per-task table A -> B (pass, failed calls, wall) + totals
 """
 import csv
 import json
@@ -42,6 +43,9 @@ def prep(task_dir, dest):
     here = os.path.dirname(os.path.abspath(__file__))
     shutil.copy(os.path.join(task_dir, "check.sh"), os.path.join(dest, ".eval", "check.sh"))
     shutil.copy(os.path.join(here, "driver.sh"), os.path.join(dest, ".eval", "driver.sh"))
+    cfg = os.environ.get("SWARG_EVAL_CONFIG")  # experiment: a whole swarg config.json for every task
+    if cfg:
+        shutil.copy(cfg, os.path.join(dest, ".eval", "config.json"))
     for i, t in enumerate(turns, 1):
         with open(os.path.join(dest, ".eval", "turn-%02d.txt" % i), "w", encoding="utf-8") as f:
             f.write(t + "\n")
@@ -181,6 +185,41 @@ def report(run_dir, model):
         f.write("\n".join(out))
 
 
+# ---------------------------------------------------------------------------
+# compare
+# ---------------------------------------------------------------------------
+
+
+def rows_of(run_dir):
+    path = os.path.join(run_dir, "results.jsonl")
+    if not os.path.isfile(path):
+        sys.exit("no results: %s" % path)
+    return {r["task"]: r for r in (json.loads(ln) for ln in read(path).splitlines() if ln.strip())}
+
+
+def compare(a, b):
+    """Print a Markdown table of run B against run A, one line per task, and the totals over the
+    tasks present in both runs (a screen on a task subset is compared with a full run)."""
+    ra, rb = rows_of(a), rows_of(b)
+    print("| task | %s | %s | failed calls | steps | completion tok | wall s |" % (os.path.basename(a.rstrip("/")), os.path.basename(b.rstrip("/"))))
+    print("|---|---|---|---|---|---|---|")
+    pair = lambda x, y, k: "%s -> %s" % (x[k] if x else "-", y[k] if y else "-")
+    for t in sorted(set(ra) | set(rb)):
+        x, y = ra.get(t), rb.get(t)
+        mark = ""
+        if x and y and x["status"] != y["status"]:
+            mark = " **+**" if y["status"] == "PASS" else " **-**"
+        print("| %s | %s | %s%s | %s | %s | %s | %s |" % (
+            t, x["status"] if x else "-", y["status"] if y else "-", mark,
+            pair(x, y, "failed"), pair(x, y, "steps"), pair(x, y, "completion"), pair(x, y, "wall_s")))
+    common = sorted(set(ra) & set(rb))
+    tot = lambda rs, k: sum(rs[t][k] for t in common)
+    npass = lambda rs: sum(rs[t]["status"] == "PASS" for t in common)
+    print("| **common %d** | **%d/%d** | **%d/%d** | %d -> %d | %d -> %d | %d -> %d | %d -> %d |" % (
+        len(common), npass(ra), len(common), npass(rb), len(common), tot(ra, "failed"), tot(rb, "failed"),
+        tot(ra, "steps"), tot(rb, "steps"), tot(ra, "completion"), tot(rb, "completion"), tot(ra, "wall_s"), tot(rb, "wall_s")))
+
+
 def main(a):
     if len(a) == 3 and a[0] == "prep":
         prep(a[1], a[2])
@@ -188,6 +227,8 @@ def main(a):
         collect(a[1], a[2], a[3])
     elif len(a) == 3 and a[0] == "report":
         report(a[1], a[2])
+    elif len(a) == 3 and a[0] == "compare":
+        compare(a[1], a[2])
     else:
         sys.exit(__doc__)
 

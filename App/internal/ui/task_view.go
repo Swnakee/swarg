@@ -10,20 +10,24 @@ import (
 // Task blocks: the stack of running Tasks, placing items inside them, /task
 // ---------------------------------------------------------------------------
 
-// taskStart pushes the block of the call that started a Task. The block itself was added by
-// the call's EvToolStart, at the depth of the Task that made the call.
+// taskStart pushes the block of the call that started a Task and opens it: the Task's work shows
+// as it happens (R-62). The block itself was added by the call's EvToolStart, at the depth of the
+// Task that made the call.
 func (m *model) taskStart(ev agent.Event) {
 	m.endLive(false)
 	if r := m.runningByID(ev.Call.ID); r != nil {
 		m.tasks = append(m.tasks, r.item)
+		m.cv.setOpen(r.item, true)
 	}
 }
 
-// taskEnd pops the innermost Task; the text it streamed last is finished first, so the
-// Session's next text starts its own item.
+// taskEnd pops the innermost Task and folds its block to the one-line summary (a click opens it
+// again, R-62); the text it streamed last is finished first, so the Session's next text starts its
+// own item.
 func (m *model) taskEnd() {
 	m.endLive(false)
 	if n := len(m.tasks); n > 0 {
+		m.cv.setOpen(m.tasks[n-1], false)
 		m.tasks = m.tasks[:n-1]
 	}
 }

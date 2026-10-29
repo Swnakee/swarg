@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
+	"github.com/charmbracelet/x/ansi"
 
 	"swarg/internal/agent"
 	"swarg/internal/chat"
@@ -210,6 +213,41 @@ func TestTaskBlock_NestedTaskClosedByDefault(t *testing.T) {
 	}
 }
 
+func TestTaskBlock_EightLevelsFoldPerLevel(t *testing.T) {
+	const levels = 8
+	r := newRig(t)
+	evs := []agent.Event{started("go")}
+	for i := 1; i <= levels; i++ {
+		evs = append(evs, taskOpen(fmt.Sprintf("tk%d", i), fmt.Sprintf("t%d", i), fmt.Sprintf("lvl%d", i), i)...)
+	}
+	evs = append(evs, inTask("t8", delta("bottom text"))...)
+	for i := levels; i >= 1; i-- {
+		evs = append(evs, taskClose(fmt.Sprintf("tk%d", i), fmt.Sprintf("t%d", i), fmt.Sprintf("lvl%d", i), "done")...)
+	}
+	r.events(evs...)
+	for i := 1; i <= levels; i++ { // every block sits one level deeper than its parent
+		if it := r.m.cv.at(r.m.rec(i).item); it.depth != i-1 {
+			t.Fatalf("block %d depth %d, want %d", i, it.depth, i-1)
+		}
+	}
+	if text := r.convText(); strings.Contains(text, "lvl2") || strings.Contains(text, "bottom text") {
+		t.Fatalf("closed level 1 shows its work:\n%s", text)
+	}
+	for i := 1; i <= levels; i++ { // opening one level reveals exactly the next head
+		r.open(i)
+		text := r.convText()
+		if i < levels && !strings.Contains(text, gutterOf(i)+"● task(lvl"+fmt.Sprint(i+1)+")") {
+			t.Fatalf("level %d open, no level %d head under %d gutters:\n%s", i, i+1, i, text)
+		}
+		if i < levels && strings.Contains(text, "bottom text") {
+			t.Fatalf("level %d open already shows the bottom text", i)
+		}
+	}
+	if text := r.convText(); !strings.Contains(text, gutterOf(levels)+"  bottom text") {
+		t.Fatalf("all open, the bottom text lacks %d gutters:\n%s", levels, text)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Scrolling and selection
 // ---------------------------------------------------------------------------
@@ -219,6 +257,7 @@ func TestTaskBlock_HiddenItemsAtListEndScroll(t *testing.T) {
 	r.size(80, 20)
 	r.fillRows(60)
 	r.events(append([]agent.Event{started("q")}, taskOpen("tk", "t1", "work", 1)...)...)
+	r.m.cv.setOpen(r.m.rec(1).item, false) // the user folded the running Task (R-62 opens it)
 	total := r.m.cv.total()
 	r.events(inTask("t1", delta("hidden one"), toolStart("c1", "shell", "ls"), delta("hidden two"))...)
 	if got := r.m.cv.total(); got != total {
@@ -587,5 +626,75 @@ func TestReadable_TaskBlockInEveryProfile(t *testing.T) {
 				t.Errorf("unreadable cells with the hover:\n  %s", strings.Join(bad, "\n  "))
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A running Task is open, folds when it ends, its rows have a lighter background (R-62)
+// ---------------------------------------------------------------------------
+
+// runningTask starts a Task with one streamed line and one running shell call inside it.
+func runningTask(t *testing.T) *rig {
+	r := newRig(t)
+	r.events(cat(
+		[]agent.Event{started("do it")},
+		taskOpen("tk", "t1", "fix tests", 1),
+		inTask("t1", delta("child says hi")),
+		inTask("t1", toolStart("c1", "shell", "go test")),
+	)...)
+	return r
+}
+
+func TestTaskBlock_OpenWhileRunningFoldsAtEnd(t *testing.T) {
+	r := runningTask(t)
+	text := r.convText()
+	for _, want := range []string{gutterOf(1) + "  child says hi", gutterOf(1) + "● shell(go test)"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("running Task hides %q:\n%s", want, text)
+		}
+	}
+	r.events(cat(
+		inTask("t1", toolEnd("c1", "shell", "go test", "", "ok\n[exit 0]\n", nil)),
+		taskClose("tk", "t1", "fix tests", "fixed it"),
+	)...)
+	text = r.convText()
+	if strings.Contains(text, "child says hi") || strings.Contains(text, "shell(go test)") || !strings.Contains(text, "└ fixed it") {
+		t.Errorf("ended Task did not fold to its summary:\n%s", text)
+	}
+	r.open(1)
+	if text := r.convText(); !strings.Contains(text, "shell(go test)") {
+		t.Errorf("a click does not open the ended Task again:\n%s", text)
+	}
+}
+
+func TestTaskBlock_NestedRunningOpen(t *testing.T) {
+	r := newRig(t)
+	r.events(cat(
+		[]agent.Event{started("go")},
+		taskOpen("tk1", "t1", "outer", 1),
+		taskOpen("tk2", "t2", "inner", 2),
+		inTask("t2", delta("deep text")),
+	)...)
+	if text := r.convText(); !strings.Contains(text, gutterOf(1)+"● task(inner)") || !strings.Contains(text, gutterOf(2)+"  deep text") {
+		t.Errorf("running nested Tasks are not open:\n%s", text)
+	}
+}
+
+func TestTaskBlock_RowsHaveTaskBackground(t *testing.T) {
+	r := runningTask(t)
+	r.send(tea.ColorProfileMsg{Profile: colorprofile.TrueColor})
+	rows := strings.Split(r.m.View().Content, "\n")
+	child, session := r.rowIndex("child says hi"), r.rowIndex("do it")
+	if child < 0 || session < 0 {
+		t.Fatalf("rows not found:\n%s", r.view())
+	}
+	if !strings.Contains(rows[child], taskBgSeq) {
+		t.Errorf("a Task row has no Task background: %q", rows[child])
+	}
+	if w := ansi.StringWidth(rows[child]); w != 80 {
+		t.Errorf("Task row width %d, want the full width 80 (background across the row)", w)
+	}
+	if strings.Contains(rows[session], taskBgSeq) {
+		t.Errorf("a Session row has the Task background: %q", rows[session])
 	}
 }

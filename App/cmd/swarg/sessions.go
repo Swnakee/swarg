@@ -130,6 +130,7 @@ type saving struct {
 	withTrace bool
 	history   []chat.Message // the resumed Session's history, for the agent and the UI
 	maxSeq    int
+	thinking  bool        // the resumed Session's last thinking mode
 	model     string      // the resumed Session's last Model choice ("" for a new session)
 	on        bool        // saving is on: a SessionFile is being written
 	store     agent.Store // nil when saving is off
@@ -156,7 +157,7 @@ func openSaving(dir string, resume session.Info, h session.Header, save, withTra
 		if err != nil {
 			return nil, err
 		}
-		s.history, s.maxSeq, s.prior, s.model = l.Messages(), l.MaxSeq(), len(l.Entries), l.Model()
+		s.history, s.maxSeq, s.prior, s.model, s.thinking = l.Messages(), l.MaxSeq(), len(l.Entries), l.Model(), l.Thinking()
 	}
 	if !save {
 		return s, nil
@@ -270,7 +271,7 @@ func (s *saving) Open(id string) (ui.Opened, error) {
 	if err != nil {
 		return ui.Opened{}, err
 	}
-	o := ui.Opened{History: l.Messages(), MaxSeq: l.MaxSeq(), Model: l.Model(), Title: in.Title}
+	o := ui.Opened{History: l.Messages(), MaxSeq: l.MaxSeq(), Model: l.Model(), Think: l.Thinking(), Title: in.Title}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.w == nil || s.w.Path() == in.Path {
@@ -348,6 +349,9 @@ func (x swStore) Repair(ms []chat.Message) error {
 }
 func (x swStore) Model(name string) error {
 	return x.with(func(st *session.Store) error { return st.Model(name) })
+}
+func (x swStore) Thinking(on bool) error {
+	return x.with(func(st *session.Store) error { return st.Thinking(on) })
 }
 func (x swStore) Flush() error { return x.with(func(st *session.Store) error { return st.Flush() }) }
 

@@ -335,6 +335,8 @@ def x_web(dst: Path, model: str) -> tuple[str, str]:
     subprocess.run(["go", "build", "-o", str(binp), "./cmd/swarg"], cwd=APP, check=True)
     home = Path(tempfile.mkdtemp(prefix="xm-web-home-"))
     proj = Path(tempfile.mkdtemp(prefix="xm-web-proj-"))
+    if os.environ.get("SWARG_PROMPT_DIR"):  # the prompt variant, like run.sh does for the sandbox
+        shutil.copytree(os.environ["SWARG_PROMPT_DIR"], home / ".config" / "swarg" / "blocks")
     env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(home / ".config"), TERM="xterm-256color")
     here = os.getcwd()
     os.chdir(proj)  # the PTY child starts in the temp project

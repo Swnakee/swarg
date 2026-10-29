@@ -52,5 +52,7 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	registerTraceSteps(sc, w)
 	registerCompactionSteps(sc, w)
 	registerModelSteps(sc, w)
+	registerThinkSteps(sc, w)
 	registerTaskSteps(sc, w)
+	registerActivitySteps(sc, w)
 }

@@ -53,6 +53,12 @@ func registerBlocksSteps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^the SystemPrompt sent to the Provider contains the base Block$`, func() error {
 		return w.wantSystem(true, "You are swarg")
 	})
+	sc.Step(`^the SystemPrompt sent to the Provider contains "([^"]*)" instead of the base Block$`, func(text string) error {
+		if err := w.wantSystem(true, text); err != nil {
+			return err
+		}
+		return w.wantSystem(false, "You are swarg")
+	})
 }
 
 // wantSystem checks the SystemPrompt of the last request.

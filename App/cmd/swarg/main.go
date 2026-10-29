@@ -144,7 +144,8 @@ func run() (int, error) {
 	approver := ui.NewApprover(o.yes)
 	approver.SetAuto(cfg.Tools.AutoApprove)
 	client := openai.New(p.BaseURL, p.APIKey(), nil)
-	first := model // the agent starts with the session's own model; a --model flag is a change
+	client.IdleTimeout = p.IdleTimeout() // R-63
+	first := model                       // the agent starts with the session's own model; a --model flag is a change
 	if sv.model != "" {
 		first = sv.model
 	}
@@ -156,6 +157,8 @@ func run() (int, error) {
 		MaxTokens:    p.MaxTokens,
 		ContextLimit: p.ContextLimit,
 		Extra:        p.ExtraBody,
+		ThinkExtra:   p.ThinkingBody(),
+		ThinkTokens:  p.ThinkingLimit(),
 		OnEvent:      onModel(set, send),
 		Tools: toolRunner{set: ts, env: tools.Env{
 			Root:         root,
@@ -180,9 +183,15 @@ func run() (int, error) {
 		Tasks:       agent.TaskLimits{MaxDepth: cfg.Tasks.MaxDepth, MaxSteps: cfg.Tasks.MaxSteps, MaxPerTurn: cfg.Tasks.MaxPerTurn},
 	})
 	if len(sv.history) > 0 {
-		if err := a.Load(sv.history, agent.WithMaxSeq(sv.maxSeq)); err != nil {
+		if err := a.Load(sv.history, agent.WithMaxSeq(sv.maxSeq), agent.WithThinking(sv.thinking)); err != nil {
 			return 1, err
 		}
+	}
+	think := p.Thinking // R-60: a new session starts as configured, a resumed one with its own mode
+	if len(sv.history) > 0 {
+		think = sv.thinking
+	} else {
+		a.SetThinking(think)
 	}
 	if err := a.SetModel(model); err != nil { // records --model over a resumed session's choice
 		return 2, err
@@ -197,6 +206,7 @@ func run() (int, error) {
 		Yes:         o.yes,
 		AutoApprove: cfg.Tools.AutoApprove,
 		Model:       model,
+		Think:       think,
 		Project:     filepath.Base(cwd),
 		Limit:       p.LimitFor(first), // the initial value; EvMeter carries the live one
 	}

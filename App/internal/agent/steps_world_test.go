@@ -80,6 +80,7 @@ type world struct {
 	ses       *sessionWorld // sessions.feature
 	trc       *traceWorld   // trace.feature
 	cmp       *compactWorld // compaction.feature
+	thk       *thinkWorld   // thinking.feature
 	mdl       *modelWorld   // model_choice.feature, generation_speed.feature
 	clearErr  error
 	switchErr error
@@ -138,7 +139,11 @@ func (w *world) begin() error {
 	if w.ag != nil {
 		return nil
 	}
-	set, _, err := prompt.Load(w.globalDir(), w.cwd(), prompt.Env{OS: "test", Shell: "sh", Dir: w.cwd(), Date: "2026-01-01", Model: "m"})
+	var extra []prompt.Block // like main: the task block is in the SystemPrompt when Tasks are on
+	if w.tasks.MaxDepth > 0 {
+		extra = append(extra, prompt.Block{Name: "tool-task", Source: prompt.SourceTool, Order: 599, Text: TaskBlock})
+	}
+	set, _, err := prompt.Load(w.globalDir(), w.cwd(), prompt.Env{OS: "test", Shell: "sh", Dir: w.cwd(), Date: "2026-01-01", Model: "m"}, extra...)
 	if err != nil {
 		return err
 	}
@@ -174,6 +179,7 @@ func (w *world) begin() error {
 	}
 	w.plugCompaction(&deps)
 	w.plugModel(&deps)
+	w.plugThink(&deps)
 	if tr, err := w.toolRunner(); err != nil {
 		return err
 	} else if tr != nil {

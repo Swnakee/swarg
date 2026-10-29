@@ -27,7 +27,9 @@ type Deps struct {
 	MaxTokens    int
 	ContextLimit int
 	Extra        map[string]any
-	OnEvent      func(Event) // nil-safe; called from the worker, the caller, or a running tool via Progress (never after the tool returned); never under a lock
+	ThinkExtra   map[string]any // laid over Extra while thinking is on (R-60); nil = thinking changes nothing in the body
+	ThinkTokens  int            // MaxTokens while thinking is on; 0 = MaxTokens
+	OnEvent      func(Event)    // nil-safe; called from the worker, the caller, or a running tool via Progress (never after the tool returned); never under a lock
 
 	Tools    ToolRunner                                          // nil = no tools: one step, no Tools in the request
 	Approve  func(ctx context.Context, c chat.ToolCall) Approval // nil = allow; ctx is cancelled by Interrupt and Abort
@@ -70,6 +72,7 @@ type Agent struct {
 	interrupted bool // first Interrupt or Abort of the running turn
 	aborted     bool // Abort (or a second Interrupt) of the running turn
 	stopped     bool
+	thinking    bool            // the thinking mode (R-60)
 	model       string          // the Model choice: the model id of the next request (R-30)
 	chain       []*conversation // the running Chain: the Session, then the Tasks inside it; empty when idle
 	taskSeq     int             // Task ids handed out

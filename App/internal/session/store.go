@@ -41,5 +41,8 @@ func (s *Store) Repair(ms []chat.Message) error {
 // Flush forces the file to stable storage.
 func (s *Store) Flush() error { return s.w.Flush() }
 
+// Thinking records a thinking mode switch.
+func (s *Store) Thinking(on bool) error { return s.w.Thinking(on) }
+
 // Model records a Model choice.
 func (s *Store) Model(name string) error { return s.w.Model(name) }

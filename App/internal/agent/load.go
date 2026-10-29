@@ -21,6 +21,7 @@ type loadItem struct {
 	history []chat.Message
 	maxSeq  int
 	model   string // WithModel; "" = keep the model
+	think   *bool  // WithThinking; nil = keep the thinking mode
 }
 
 // LoadOption tunes Load.
@@ -29,6 +30,10 @@ type LoadOption func(*loadItem)
 // WithMaxSeq tells Load the highest Seq the SessionFile ever used (`session.Loaded.MaxSeq`), so
 // new messages continue above it even when the file's tail was cleared or compacted.
 func WithMaxSeq(n int) LoadOption { return func(l *loadItem) { l.maxSeq = n } }
+
+// WithThinking makes Load also set the thinking mode (a resumed Session continues with its last
+// choice; a file with no choice is off). The SessionFile already holds it, so nothing is recorded.
+func WithThinking(on bool) LoadOption { return func(l *loadItem) { l.think = &on } }
 
 // callIDRe matches the ids the agent generates.
 var callIDRe = regexp.MustCompile(`^call_(\d+)$`)
@@ -69,12 +74,19 @@ func (a *Agent) runLoad(ld *loadItem) {
 		a.model = ld.model
 		a.setLimitLocked(ld.model) // after applyLoadLocked's meter.reset: the limit of the loaded model
 	}
+	thinkChanged := ld.think != nil && *ld.think != a.thinking
+	if thinkChanged {
+		a.thinking = *ld.think
+	}
 	ev, _ := a.meterEvent()
 	a.traceLocked("load", map[string]any{"messages": len(a.history), "repaired": repaired, "seq": a.seq, "model": a.model})
 	a.mu.Unlock()
 	a.emit(ev)
 	if changed {
 		a.emit(Event{Kind: EvModel, Text: ld.model})
+	}
+	if thinkChanged {
+		a.emit(thinkEvent(*ld.think))
 	}
 	a.sync()
 	a.mu.Lock()

@@ -47,7 +47,7 @@ func TestPickerInApp_EnterOpensTheSelectedSession(t *testing.T) {
 	r.cmd("/sessions")
 	r.send(key(tea.KeyDown, 0)) // a (newest) -> b
 	r.send(key(tea.KeyEnter, 0))
-	if len(ss.loads) != 1 || ss.loads[0] != "b" || len(ag.loaded) != 1 || ag.loadOpts != 2 {
+	if len(ss.loads) != 1 || ss.loads[0] != "b" || len(ag.loaded) != 1 || ag.loadOpts != 3 {
 		t.Fatalf("opens %v, agent loads %d (opts %d)", ss.loads, len(ag.loaded), ag.loadOpts)
 	}
 	if r.m.pick != nil {

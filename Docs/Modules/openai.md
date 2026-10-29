@@ -6,7 +6,7 @@ package does not import `agent`.
 
 API:
 - `New(baseURL, apiKey string, hc *http.Client) *Client` - nil `hc` gets a cloned default transport with a 5 min response header timeout and no overall timeout. A trailing `/` in `baseURL` is trimmed.
-- `Client.IdleTimeout time.Duration` - exported field, default 120 s. No bytes for this long ends the stream with an idle error.
+- `Client.IdleTimeout time.Duration` - exported field, default 600 s (main sets it from the provider's `idle_timeout_s`, R-63). No bytes for this long ends the stream with an idle error. mlx_lm.server sends a tool call in ONE chunk at the end of the generation: a long `write_file` at a few tok/s is minutes of silence, which is why the default is long.
 - `(*Client).Stream(ctx, chat.Request) (<-chan chat.StreamEvent, error)` - POSTs `{base}/chat/completions`; returns `(nil, err)` if the request cannot start.
 - `(*Client).Health(ctx, model string) error` - non-streaming POST `{model, messages:[{role:user,content:"hi"}], max_tokens:1, stream:false}`; nil on 2xx, else an error with status and body snippet. Uses its own 30 s timeout on top of ctx.
 - `(*Client).Models(ctx) ([]string, error)` - `GET {base}/models`, the `data[].id` values sorted, blanks and duplicates dropped; 10 s timeout on top of ctx; errors as for Stream (`cannot reach ...`, `model server returned <status>: <snippet>`) or `model list from <base>: <json error>`. Used by `/model` (main's `modelsView`).
@@ -41,7 +41,7 @@ Gotchas:
 - Outgoing assistant messages carry `reasoning_content` (from `Message.Reasoning`, omitted when empty) so the template reproduces the prompt prefix and the server cache hits. A strict OpenAI server may reject the key; the local mlx server accepts it.
 - mlx_lm.server sends `: keepalive i/N` comments during prompt prefill. They count as bytes for the idle timer, so a long prefill does not trip `IdleTimeout`. Keep that in mind before changing the idle logic.
 - The idle timer runs only while a `Read` is blocked; a slow consumer (blocked on the events channel) does not trigger it.
-- The idle error text uses `time.Duration.String()`, so the default reads `idle 2m0s`.
+- The idle error text uses `time.Duration.String()`, so the default reads `idle 10m0s`.
 - `GET /v1/models` on mlx_lm.server lists all cached models, not only the loaded one (the server loads the requested one per request, so any of them can be chosen). Do not use it to discover the served model (the e2e runner reads the process argv instead).
 - The mlx server is single-lane. Owner rule: never disconnect mid-generation. Cancel the ctx only at shutdown; the agent never cancels a request on interrupt.
 - The server may send usage in a chunk with empty `choices`; that chunk yields `EventUsage` only.

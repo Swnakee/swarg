@@ -28,6 +28,9 @@ const (
 	undeliveredWarning = "the model's output was not delivered (probably a tool call that was too long or unparsable); asking it again"
 	undeliveredStop    = "stopped: the model's output was not delivered"
 	undeliveredNudge   = "Your last answer hit the output limit and nothing arrived (probably a tool call that was too long). Try again and keep tool arguments short: write big files in several smaller steps."
+	droppedWarning     = "the model's answer arrived empty though it wrote tokens (probably an unclosed tool call the server dropped); asking it again"
+	droppedStop        = "stopped: the model's answer arrived empty"
+	droppedNudge       = "Your last answer arrived empty: nothing reached me (probably a tool call that was not closed). Send it again, complete."
 )
 
 // maxDenials is the number of denied calls in one Turn that ends the Turn.
@@ -60,6 +63,7 @@ type turnResult struct {
 	clock     stepClock       // times of the stream, for the Generation speed
 	status    string          // how the loop ended (statusDone, ...); set by runLoop
 	steps     int             // Steps the loop took
+	tokens    int             // completion tokens of the Step (usage), 0 when not reported
 }
 
 // runTurn runs one Turn of the Session: steps until the model answers without tool calls, the
@@ -173,7 +177,9 @@ func (a *Agent) runLoop(c *conversation, repeats *repeatGuard) (*turnResult, cha
 
 // lostCall reports a Step whose output never became usable: finish "tool_calls" without a call
 // (the server could not parse it, F10), or finish "length" with no text, no reasoning and no
-// call (the server held a too long or endless tool call back until max_tokens, F11). It returns
+// call (the server held a too long or endless tool call back until max_tokens, F11), or finish
+// "stop" with tokens written but nothing delivered (the server dropped a tool call the model did
+// not close, T5 M1; one token is just the end token: a real empty answer). It returns
 // the warning, the nudge for the model and the stop note; all "" for a normal Step.
 func lostCall(r *turnResult) (warning, nudge, stop string) {
 	switch {
@@ -181,6 +187,8 @@ func lostCall(r *turnResult) (warning, nudge, stop string) {
 		return unparsedWarning, unparsedNudge, unparsedStop
 	case r.finish == chat.FinishLength && !r.looped && r.text.Len() == 0 && r.reasoning.Len() == 0:
 		return undeliveredWarning, undeliveredNudge, undeliveredStop
+	case r.finish == chat.FinishStop && r.tokens > 1 && r.text.Len() == 0 && r.reasoning.Len() == 0 && len(r.raw) == 0:
+		return droppedWarning, droppedNudge, droppedStop
 	}
 	return "", "", ""
 }
@@ -254,7 +262,14 @@ func (a *Agent) request(c *conversation) chat.Request {
 		}
 		msgs = append(msgs, m)
 	}
-	return chat.Request{Model: a.model, Messages: msgs, MaxTokens: a.deps.MaxTokens, Extra: a.deps.Extra, Tools: a.specs(c)}
+	req := chat.Request{Model: a.model, Messages: msgs, MaxTokens: a.deps.MaxTokens, Extra: a.deps.Extra, Tools: a.specs(c)}
+	if a.thinking { // R-60
+		req.Extra = mergeExtra(a.deps.Extra, a.deps.ThinkExtra)
+		if a.deps.ThinkTokens > req.MaxTokens { // never shrink a larger configured limit
+			req.MaxTokens = a.deps.ThinkTokens
+		}
+	}
+	return req
 }
 
 // consume reads the stream to its end, even after an interrupt (drain); a
@@ -282,6 +297,11 @@ func (a *Agent) handle(c *conversation, r *turnResult, ev chat.StreamEvent) bool
 	case chat.EventReasoning:
 		if !r.draining && !a.isInterrupted() {
 			r.reasoning.WriteString(ev.Text)
+			a.emit(c.tag(Event{Kind: EvActivity, Text: ev.Text}))
+		}
+	case chat.EventToolDelta:
+		if !r.draining && !a.isInterrupted() {
+			a.emit(c.tag(Event{Kind: EvActivity, Text: ev.Text}))
 		}
 	case chat.EventDelta:
 		if r.draining || a.isInterrupted() {
@@ -309,6 +329,7 @@ func (a *Agent) handle(c *conversation, r *turnResult, ev chat.StreamEvent) bool
 		a.mu.Lock()
 		c.meter.setUsage(ev.Usage)
 		a.mu.Unlock()
+		r.tokens = ev.Usage.CompletionTokens
 		a.traceC(c, "usage", map[string]any{"prompt": ev.Usage.PromptTokens, "completion": ev.Usage.CompletionTokens, "cached": ev.Usage.CachedTokens})
 	case chat.EventDone:
 		r.finish, r.err, r.raw = ev.Finish, ev.Err, ev.ToolCalls
@@ -437,7 +458,7 @@ func (a *Agent) checkHealth(ctx context.Context) {
 // reading at TurnEnded (plain mode) still see everything of the turn.
 func (a *Agent) endTurn(r *turnResult, msg chat.Message) {
 	var evs []Event
-	if r.text.Len() == 0 && r.finish == chat.FinishStop && len(r.calls) == 0 {
+	if r.text.Len() == 0 && r.finish == chat.FinishStop && len(r.calls) == 0 && r.note == "" {
 		evs = append(evs, Event{Kind: EvWarning, Text: "empty answer"})
 	}
 	if r.note != "" {

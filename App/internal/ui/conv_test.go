@@ -549,3 +549,25 @@ func TestBlockRows_OutputUsesTheFullWidth(t *testing.T) {
 		t.Errorf("a line of exactly the free width took %d rows, want 1:\n%s", n, strings.Join(rows, "\n"))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Task background survives the resets inside a row (R-62)
+// ---------------------------------------------------------------------------
+
+func TestWithTaskBackground_ReappliedAfterEveryReset(t *testing.T) {
+	row := "\x1b[1;38;2;255;0;0mhead\x1b[m plain \x1b[32mgreen\x1b[0m tail"
+	got := withTaskBackground(row, 30)
+	for _, reset := range []string{"\x1b[m", "\x1b[0m"} {
+		for _, part := range strings.Split(got, reset)[1:] {
+			if part != "" && !strings.HasPrefix(part, taskBgSeq) { // the final reset ends the row
+				t.Errorf("after %q the background is not re-applied: %q", reset, part)
+			}
+		}
+	}
+	if !strings.HasPrefix(got, taskBgSeq) || !strings.HasSuffix(got, "\x1b[m") || ansi.StringWidth(got) != 30 {
+		t.Errorf("row = %q, want background first, reset last, width 30", got)
+	}
+	if got := rgbSeq(48, "#121212"); got != "\x1b[48;2;18;18;18m" {
+		t.Errorf("rgbSeq = %q", got)
+	}
+}

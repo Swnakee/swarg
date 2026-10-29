@@ -22,6 +22,7 @@ type Store interface {
 	Compact(fromSeq, toSeq int, summary chat.Message) error // one WorkSpan replaced by its WorkSummary
 	Repair(ms []chat.Message) error                         // synthetic results made by Load
 	Model(name string) error                                // a Model choice (SetModel)
+	Thinking(on bool) error                                 // a thinking mode switch (SetThinking)
 	Flush() error                                           // end of every Turn
 }
 
