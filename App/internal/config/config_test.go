@@ -82,8 +82,8 @@ func TestLoad_OldProviderKeepsItsOwnValues(t *testing.T) {
 
 func TestDefaults_ToolsSection(t *testing.T) {
 	tl := Defaults().Tools
-	if tl.Disabled == nil || len(tl.Disabled) != 0 || tl.MaxSteps != 25 || tl.ShellTimeoutSec != 120 || tl.AutoApprove {
-		t.Fatalf("tools defaults = %+v, want disabled [], max_steps 25, shell_timeout_sec 120, auto_approve false", tl)
+	if tl.Disabled == nil || len(tl.Disabled) != 0 || tl.MaxSteps != 50 || tl.ShellTimeoutSec != 120 || tl.AutoApprove {
+		t.Fatalf("tools defaults = %+v, want disabled [], max_steps 50, shell_timeout_sec 120, auto_approve false", tl)
 	}
 }
 
@@ -160,7 +160,7 @@ func TestLoad_OldFileKeepsToolsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("old file without tools: %v", err)
 	}
-	if old.Tools.MaxSteps != 25 || old.Tools.ShellTimeoutSec != 120 || old.Tools.AutoApprove || len(old.Tools.Disabled) != 0 {
+	if old.Tools.MaxSteps != 50 || old.Tools.ShellTimeoutSec != 120 || old.Tools.AutoApprove || len(old.Tools.Disabled) != 0 {
 		t.Fatalf("tools = %+v, want defaults", old.Tools)
 	}
 
@@ -635,5 +635,130 @@ func TestProvider_IdleTimeoutFromFile(t *testing.T) {
 	}
 	if d := got.Active().IdleTimeout(); d != 30*time.Second {
 		t.Errorf("idle timeout from the file = %v, want 30s", d)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Ollama provider type (R-64)
+// ---------------------------------------------------------------------------
+
+func TestDefaults_OllamaPreset(t *testing.T) {
+	c := Defaults()
+	p, ok := c.Providers["ollama"]
+	if !ok {
+		t.Fatal("no ollama preset in Defaults")
+	}
+	if p.Type != "ollama" || p.BaseURL != "http://127.0.0.1:11434/v1" || p.Model == "" || p.ContextLimit <= 0 {
+		t.Fatalf("preset %+v", p)
+	}
+	if p.MaxTokens != 4096 { // a 250-line file is ~2800 tokens: 2048 cut it on every model (T7 code-07)
+		t.Errorf("max_tokens = %d, want 4096", p.MaxTokens)
+	}
+	if p.ExtraBody["reasoning_effort"] != "none" {
+		t.Errorf("extra_body = %v, want reasoning_effort none", p.ExtraBody)
+	}
+	if _, has := p.ExtraBody["chat_template_kwargs"]; has {
+		t.Error("the ollama preset must not carry chat_template_kwargs (Ollama ignores it)")
+	}
+	c.Provider = "ollama"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("ollama preset must validate: %v", err)
+	}
+}
+
+func TestValidate_ProviderTypes(t *testing.T) {
+	for _, tc := range []struct {
+		typ string
+		ok  bool
+	}{{"openai", true}, {"ollama", true}, {"openrouter", true}, {"foo", false}} {
+		c := Defaults()
+		p := c.Active()
+		p.Type = tc.typ
+		c.Providers[c.Provider] = p
+		err := c.Validate()
+		if (err == nil) != tc.ok {
+			t.Errorf("type %q: err = %v, want ok=%v", tc.typ, err, tc.ok)
+		}
+		if err != nil && !strings.Contains(err.Error(), "type must be") {
+			t.Errorf("type %q: error %q does not name the type rule", tc.typ, err)
+		}
+	}
+}
+
+func TestThinkingBody_ByType(t *testing.T) {
+	o := Provider{Type: "ollama"}.ThinkingBody()
+	if o["reasoning_effort"] != "high" || o["temperature"] != 0.6 || o["top_p"] != 0.95 || o["presence_penalty"] != 0.0 {
+		t.Errorf("ollama thinking body %v", o)
+	}
+	if _, has := o["chat_template_kwargs"]; has {
+		t.Error("ollama thinking body must not carry chat_template_kwargs")
+	}
+	q := Provider{Type: "openai"}.ThinkingBody()
+	args, _ := q["chat_template_kwargs"].(map[string]any)
+	if args["enable_thinking"] != true {
+		t.Errorf("openai thinking body %v", q)
+	}
+	if _, has := q["reasoning_effort"]; has {
+		t.Error("openai thinking body must not carry reasoning_effort")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Skills and MCP (T8 S/M)
+// ---------------------------------------------------------------------------
+
+// A file without skills and mcp objects loads as before: no servers, MCP confirm on.
+func TestSkillsAndMCP_Defaults(t *testing.T) {
+	c := Defaults()
+	if len(c.Skills.Disabled) != 0 || len(c.MCP.Servers) != 0 || !c.MCP.Confirm {
+		t.Fatalf("defaults %+v %+v", c.Skills, c.MCP)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	os.WriteFile(path, []byte(`{"mcp":{"servers":{"demo":{"command":"python3","args":["demo.py"],"tools":["a"],"trust":true},
+		"docs":{"url":"https://mcp.example.com/mcp","headers":{"Authorization":"Bearer ${TOKEN}"}}}}}`), 0o644)
+	c, err := Load(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := c.MCP.Servers["demo"]
+	if !c.MCP.Confirm || s.Disabled || !s.Trust || s.Timeout() != 60*time.Second || len(s.Tools) != 1 {
+		t.Fatalf("server %+v confirm %v", s, c.MCP.Confirm)
+	}
+	if d := c.MCP.Servers["docs"]; d.Headers["Authorization"] != "Bearer ${TOKEN}" {
+		t.Fatalf("headers %+v", d.Headers)
+	}
+}
+
+func TestValidate_MCPServers(t *testing.T) {
+	ok := MCPServer{Command: "python3", Args: []string{"x.py"}}
+	tests := []struct {
+		name    string
+		servers map[string]MCPServer
+		wantErr string
+	}{
+		{"command only", map[string]MCPServer{"demo": ok}, ""},
+		{"url only", map[string]MCPServer{"docs": {URL: "http://127.0.0.1:3001/mcp", TimeoutSec: 600}}, ""},
+		{"url with headers", map[string]MCPServer{"docs": {URL: "https://mcp.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer ${TOKEN}"}}}, ""},
+		{"headers with command", map[string]MCPServer{"demo": {Command: "x", Headers: map[string]string{"Authorization": "Bearer x"}}}, "headers"},
+		{"empty header name", map[string]MCPServer{"docs": {URL: "https://h/", Headers: map[string]string{" ": "x"}}}, "headers"},
+		{"bad name", map[string]MCPServer{"Demo Server": ok}, "name"},
+		{"neither", map[string]MCPServer{"demo": {}}, "exactly one"},
+		{"both", map[string]MCPServer{"demo": {Command: "x", URL: "http://h/"}}, "exactly one"},
+		{"bad url", map[string]MCPServer{"demo": {URL: "ftp://h/"}}, "url"},
+		{"timeout 601", map[string]MCPServer{"demo": {Command: "x", TimeoutSec: 601}}, "timeout_sec"},
+		{"empty tool name", map[string]MCPServer{"demo": {Command: "x", Tools: []string{"a", " "}}}, "tools"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := Defaults()
+			c.MCP.Servers = tt.servers
+			err := c.Validate()
+			if tt.wantErr == "" && err != nil {
+				t.Fatalf("unexpected %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr) || !strings.HasPrefix(err.Error(), "config: ")) {
+				t.Fatalf("err = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }

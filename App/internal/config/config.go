@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -21,7 +24,7 @@ import (
 
 // Provider describes one OpenAI-compatible model server.
 type Provider struct {
-	Type          string         `json:"type"` // only "openai" in T2
+	Type          string         `json:"type"` // "openai" (mlx_lm.server and alike), "ollama" (R-64) or "openrouter" (R-102)
 	BaseURL       string         `json:"base_url"`
 	Model         string         `json:"model"`
 	ContextLimit  int            `json:"context_limit"`
@@ -92,6 +95,38 @@ type Tasks struct {
 	MaxPerTurn int `json:"max_per_turn"` // Tasks started in one Turn, 1..50
 }
 
+// Skills holds the Skill settings (R-84).
+type Skills struct {
+	Disabled []string `json:"disabled"` // Skill names switched off
+}
+
+// MCPServer is one MCP Server (R-85): a stdio program (command) or a Streamable HTTP endpoint (url).
+type MCPServer struct {
+	Command    string            `json:"command,omitempty"`
+	Args       []string          `json:"args,omitempty"`
+	Env        map[string]string `json:"env,omitempty"` // values pass through os.ExpandEnv: name a secret, never write it
+	URL        string            `json:"url,omitempty"`
+	Headers    map[string]string `json:"headers,omitempty"` // HTTP headers for url servers; values pass through os.ExpandEnv (R-91)
+	Disabled   bool              `json:"disabled"`          // not started, its Tools not offered
+	Trust      bool              `json:"trust"`             // believe readOnlyHint: such tools run without approval (R-87)
+	Tools      []string          `json:"tools,omitempty"`   // allowlist of tool names offered to the model; empty = all (R-88)
+	TimeoutSec int               `json:"timeout_sec"`       // one tools/call, 1..600; 0 = 60
+}
+
+// Timeout is the limit of one tools/call: TimeoutSec, or 60 s when unset.
+func (s MCPServer) Timeout() time.Duration {
+	if s.TimeoutSec <= 0 {
+		return 60 * time.Second
+	}
+	return time.Duration(s.TimeoutSec) * time.Second
+}
+
+// MCP holds the MCP settings (R-85..R-88).
+type MCP struct {
+	Confirm bool                 `json:"confirm"` // ask for approval before an MCP tool runs (unless trusted and read-only)
+	Servers map[string]MCPServer `json:"servers"`
+}
+
 // Config is the whole configuration file.
 type Config struct {
 	Provider  string              `json:"provider"`
@@ -102,6 +137,8 @@ type Config struct {
 	Session   Session             `json:"session"`
 	Context   Context             `json:"context"`
 	Tasks     Tasks               `json:"tasks"`
+	Skills    Skills              `json:"skills"`
+	MCP       MCP                 `json:"mcp"`
 }
 
 // ---------------------------------------------------------------------------
@@ -139,14 +176,41 @@ func Defaults() Config {
 					"repetition_penalty": 1.0,
 				},
 			},
+			// Ollama (R-64): thinking is switched with reasoning_effort; it reads only temperature,
+			// top_p, presence_penalty, frequency_penalty, seed, stop and max_tokens from /v1. The
+			// context window is a server setting (OLLAMA_CONTEXT_LENGTH); context_limit should match it.
+			"ollama": {
+				Type:         "ollama",
+				BaseURL:      "http://127.0.0.1:11434/v1",
+				Model:        "qwen3.5:4b",
+				ContextLimit: 16384,
+				MaxTokens:    4096, // a 250-line file is ~2800 tokens; 2048 cut it on every model (T7)
+				ExtraBody: map[string]any{
+					"reasoning_effort": "none",
+					"temperature":      0.7,
+					"top_p":            0.8,
+					"presence_penalty": 1.5,
+				},
+			},
+			// OpenRouter (R-102): the key comes from the environment only (I-35); the Catalog's
+			// context_length beats context_limit per model; thinking goes through `reasoning`.
+			"openrouter": {
+				Type:         "openrouter",
+				BaseURL:      "https://openrouter.ai/api/v1",
+				Model:        "google/gemma-4-26b-a4b-it:free",
+				ContextLimit: 32768,
+				MaxTokens:    4096,
+				APIKeyEnv:    "OPENROUTER_API_KEY",
+			},
 		},
 		Prompt: Prompt{WarnShare: 0.25},
-		Tools: Tools{Disabled: []string{}, MaxSteps: 25, ShellTimeoutSec: 120, AutoApprove: false,
+		Tools: Tools{Disabled: []string{}, MaxSteps: 50, ShellTimeoutSec: 120, AutoApprove: false,
 			BackgroundGraceSec: 10, OutputWaitSec: 10},
 		Web:     Web{Confirm: true, TimeoutSec: 15},
 		Session: Session{Save: true, Keep: 50, Trace: true},
 		Context: Context{AutoCompact: 70},
 		Tasks:   Tasks{MaxDepth: 8, MaxSteps: 15, MaxPerTurn: 8},
+		MCP:     MCP{Confirm: true},
 	}
 }
 
@@ -154,8 +218,21 @@ func Defaults() Config {
 const defaultThinkingMaxTokens = 8192
 
 // ThinkingBody is the part of the request body that changes with thinking on (R-60): it is laid
-// over ExtraBody. Qwen3.5 thinking preset for precise coding (AI_Notes 05).
+// over ExtraBody. Qwen3.5 thinking preset for precise coding (AI_Notes 05). An ollama provider
+// switches thinking with reasoning_effort instead of chat_template_kwargs (R-64); an openrouter
+// provider with the `reasoning` object (R-102).
 func (p Provider) ThinkingBody() map[string]any {
+	if p.Type == "openrouter" {
+		return map[string]any{"reasoning": map[string]any{"effort": "high"}}
+	}
+	if p.Type == "ollama" {
+		return map[string]any{
+			"reasoning_effort": "high",
+			"temperature":      0.6,
+			"top_p":            0.95,
+			"presence_penalty": 0.0,
+		}
+	}
 	return map[string]any{
 		"chat_template_kwargs": map[string]any{"enable_thinking": true},
 		"temperature":          0.6,
@@ -218,38 +295,15 @@ func Load(path string, explicit bool) (Config, error) {
 }
 
 // Validate checks the active provider, the prompt, tool, session, context and task settings.
+// Other provider entries are not checked here (an unused broken entry must not stop the start);
+// Provider.Validate checks one before a run-time switch (R-100).
 func (c Config) Validate() error {
 	p, ok := c.Providers[c.Provider]
 	if !ok {
 		return fmt.Errorf("config: active provider %q is not defined", c.Provider)
 	}
-	if p.Type != "openai" {
-		return fmt.Errorf("config: provider %q: type must be \"openai\", got %q", c.Provider, p.Type)
-	}
-	if u, err := url.Parse(p.BaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("config: provider %q: base_url must be an http(s) URL with a host", c.Provider)
-	}
-	if p.Model == "" {
-		return fmt.Errorf("config: provider %q: model is empty", c.Provider)
-	}
-	if p.ContextLimit <= 0 {
-		return fmt.Errorf("config: provider %q: context_limit must be > 0", c.Provider)
-	}
-	ids := make([]string, 0, len(p.ContextLimits))
-	for id := range p.ContextLimits {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		if p.ContextLimits[id] <= 0 {
-			return fmt.Errorf("config: provider %q: context_limits[%q] must be > 0", c.Provider, id)
-		}
-	}
-	if p.MaxTokens <= 0 {
-		return fmt.Errorf("config: provider %q: max_tokens must be > 0", c.Provider)
-	}
-	if p.ThinkingMaxTokens < 0 {
-		return fmt.Errorf("config: provider %q: thinking_max_tokens must be >= 0", c.Provider)
+	if err := p.Validate(c.Provider); err != nil {
+		return err
 	}
 	if c.Prompt.WarnShare <= 0 || c.Prompt.WarnShare >= 1 {
 		return fmt.Errorf("config: prompt.warn_share must be between 0 and 1 exclusive, got %v", c.Prompt.WarnShare)
@@ -265,6 +319,9 @@ func (c Config) Validate() error {
 	}
 	if c.Tools.ShellTimeoutSec < 1 || c.Tools.ShellTimeoutSec > 3600 {
 		return fmt.Errorf("config: tools.shell_timeout_sec must be between 1 and 3600, got %d", c.Tools.ShellTimeoutSec)
+	}
+	if err := c.MCP.validate(); err != nil {
+		return err
 	}
 	if c.Web.TimeoutSec < 1 || c.Web.TimeoutSec > 120 {
 		return fmt.Errorf("config: web.timeout_sec must be between 1 and 120, got %d", c.Web.TimeoutSec)
@@ -337,4 +394,121 @@ func (p Provider) LimitFor(model string) int {
 		return n
 	}
 	return p.ContextLimit
+}
+
+// ---------------------------------------------------------------------------
+// Provider checks
+// ---------------------------------------------------------------------------
+
+// Validate checks one provider entry; name is used in the error texts.
+func (p Provider) Validate(name string) error {
+	if p.Type != "openai" && p.Type != "ollama" && p.Type != "openrouter" {
+		return fmt.Errorf("config: provider %q: type must be \"openai\", \"ollama\" or \"openrouter\", got %q", name, p.Type)
+	}
+	if u, err := url.Parse(p.BaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("config: provider %q: base_url must be an http(s) URL with a host", name)
+	}
+	if p.Model == "" {
+		return fmt.Errorf("config: provider %q: model is empty", name)
+	}
+	if p.ContextLimit <= 0 {
+		return fmt.Errorf("config: provider %q: context_limit must be > 0", name)
+	}
+	ids := make([]string, 0, len(p.ContextLimits))
+	for id := range p.ContextLimits {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if p.ContextLimits[id] <= 0 {
+			return fmt.Errorf("config: provider %q: context_limits[%q] must be > 0", name, id)
+		}
+	}
+	if p.MaxTokens <= 0 {
+		return fmt.Errorf("config: provider %q: max_tokens must be > 0", name)
+	}
+	if p.ThinkingMaxTokens < 0 {
+		return fmt.Errorf("config: provider %q: thinking_max_tokens must be >= 0", name)
+	}
+	return nil
+}
+
+// Ready returns the provider name if it can be switched to (R-100): defined, valid, and its key
+// variable set when it names one (R-104); else the reason.
+func (c Config) Ready(name string) (Provider, error) {
+	p, ok := c.Providers[name]
+	if !ok {
+		return p, fmt.Errorf("provider %q is not defined; /server lists them", name)
+	}
+	if err := p.Validate(name); err != nil {
+		return p, err
+	}
+	if p.APIKeyEnv != "" && p.APIKey() == "" {
+		return p, fmt.Errorf("provider %q: no key: set %s", name, p.APIKeyEnv)
+	}
+	return p, nil
+}
+
+// Local reports whether the server is on this machine or the local network (R-104): plain http to
+// localhost, a loopback, private or link-local address, or a plain host name (a LAN name). https or
+// a public address is a cloud service that sees the conversation.
+func (p Provider) Local() bool {
+	u, err := url.Parse(p.BaseURL)
+	if err != nil || u.Scheme != "http" {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return true
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+}
+
+// ---------------------------------------------------------------------------
+// MCP validation
+// ---------------------------------------------------------------------------
+
+// mcpName is the allowed shape of an MCP Server name (it becomes part of the tool names).
+var mcpName = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
+
+// validate checks every server entry: the name, command xor url, the timeout and the allowlist.
+func (m MCP) validate() error {
+	names := make([]string, 0, len(m.Servers))
+	for n := range m.Servers {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		s := m.Servers[n]
+		switch {
+		case !mcpName.MatchString(n):
+			return fmt.Errorf("config: mcp.servers: name %q must match %s", n, mcpName)
+		case (s.Command == "") == (s.URL == ""):
+			return fmt.Errorf("config: mcp.servers.%s: exactly one of command and url is required", n)
+		case s.TimeoutSec < 0 || s.TimeoutSec > 600:
+			return fmt.Errorf("config: mcp.servers.%s: timeout_sec must be between 0 and 600, got %d", n, s.TimeoutSec)
+		}
+		if u := s.URL; u != "" {
+			if pu, err := url.Parse(u); err != nil || (pu.Scheme != "http" && pu.Scheme != "https") || pu.Host == "" {
+				return fmt.Errorf("config: mcp.servers.%s: url must be an http(s) URL with a host, got %q", n, u)
+			}
+		} else if len(s.Headers) > 0 {
+			return fmt.Errorf("config: mcp.servers.%s: headers need url", n)
+		}
+		for k := range s.Headers {
+			if strings.TrimSpace(k) == "" {
+				return fmt.Errorf("config: mcp.servers.%s: headers must not contain an empty name", n)
+			}
+		}
+		for _, t := range s.Tools {
+			if strings.TrimSpace(t) == "" {
+				return fmt.Errorf("config: mcp.servers.%s: tools must not contain an empty name", n)
+			}
+		}
+	}
+	return nil
 }

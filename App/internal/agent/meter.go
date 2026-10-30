@@ -20,8 +20,23 @@ type meter struct {
 	warned80  bool
 	warned100 bool
 
-	cachePct int  // share of the last request's prompt the server took from its cache
-	hasCache bool // a usage report has been seen
+	cachePct  int  // share of the last request's prompt the server took from its cache
+	hasCache  bool // a usage report has been seen
+	warnedCut bool // the truncation warning (R-65) was shown
+}
+
+// cutFloor is the estimated request size from which a truncated prompt is reported (R-65); below
+// it the estimate is too rough to tell.
+const cutFloor = 2048
+
+// cut returns the truncation warning when the server reports fewer than half of the estimated
+// prompt tokens of a request above cutFloor, once per meter (R-65); "" otherwise.
+func (m *meter) cut(prompt, estimate int) string {
+	if m.warnedCut || estimate < cutFloor || prompt*2 >= estimate {
+		return ""
+	}
+	m.warnedCut = true
+	return fmt.Sprintf("the server read %s of ~%s prompt tokens: its context window is smaller than the context limit (Ollama: set OLLAMA_CONTEXT_LENGTH)", formatK(prompt), formatK(estimate))
 }
 
 // setUsage records the exact usage reported by the server.

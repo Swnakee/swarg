@@ -20,6 +20,7 @@ import (
 // Tool names of fakeTools: read is read-only, mut mutates, ask mutates and needs approval.
 const (
 	toolRead = "read"
+	toolSkl  = "skill" // the skill Tool: read-only, free (the /skill prelude)
 	toolMut  = "mut"
 	toolAsk  = "ask"
 	toolEdit = "edit" // mutating, not detachable
@@ -110,7 +111,7 @@ func (f *fakeTools) Specs() []chat.ToolSpec {
 
 func (f *fakeTools) Kind(name string) (known, readOnly, confirm bool) {
 	switch name {
-	case toolRead:
+	case toolRead, toolSkl:
 		return true, true, false
 	case toolMut, toolEdit:
 		return true, false, false
@@ -1148,5 +1149,24 @@ func TestTools_SameCallsInOneBatchReachTheAnswer(t *testing.T) {
 	}
 	if end := r.rec.of(EvTurnEnded); end[0].Message.Content != "done" {
 		t.Fatalf("TurnEnded = %+v", end[0])
+	}
+}
+
+// R-90: an unknown tool name that shares a word with offered tools names them (the 9B called
+// `save_tool` for `mcp__demo__save` in the T8 eval).
+func TestSimilarTools(t *testing.T) {
+	specs := []chat.ToolSpec{{Name: "read_file"}, {Name: "write_file"}, {Name: "mcp__demo__save"}, {Name: "mcp__demo__lookup"}, {Name: "shell"}}
+	cases := map[string]string{
+		"save_tool":   "mcp__demo__save",
+		"file":        "read_file, write_file",
+		"lookup":      "mcp__demo__lookup",
+		"teleport":    "",
+		"mcp__x__ok":  "",
+		"write-files": "write_file",
+	}
+	for name, want := range cases {
+		if got := strings.Join(similarTools(name, specs), ", "); got != want {
+			t.Errorf("similarTools(%q) = %q, want %q", name, got, want)
+		}
 	}
 }

@@ -30,6 +30,18 @@ func (w *world) warnings80() (n int) {
 }
 
 func registerContextMeterSteps(sc *godog.ScenarioContext, w *world) {
+	// truncation.feature (R-65)
+	sc.Step(`^a Provider that reports (\d+) prompt tokens$`, func(n int) error {
+		w.reply(llmtest.Reply{Chunks: []string{"ok"}, Usage: &chat.Usage{PromptTokens: n, CompletionTokens: 5}})
+		return nil
+	})
+	sc.Step(`^the user submits a message of (\d+) characters$`, func(n int) error {
+		if err := w.begin(); err != nil {
+			return err
+		}
+		w.submit(strings.Repeat("word ", n/5))
+		return nil
+	})
 	sc.Step(`^a context limit of (\d+) tokens$`, func(n int) error { w.limit = n; return nil })
 	sc.Step(`^a Provider whose answer reports (\d+) tokens used$`, func(n int) error {
 		w.reply(usageReply(n, "ok"))

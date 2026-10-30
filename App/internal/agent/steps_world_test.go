@@ -85,6 +85,12 @@ type world struct {
 	clearErr  error
 	switchErr error
 
+	skl    *skillsWorld   // skills.feature
+	mc     *mcpWorld      // mcp.feature
+	cf     *configWorld   // config.feature
+	prv    *providerWorld // providers.feature
+	listed []string       // providers.feature: the first Source's model list
+
 	tasks   TaskLimits     // task_mode.feature: Deps.Tasks (zero = Tasks off)
 	limits  map[string]int // context_limit.feature: Deps.LimitFor entries
 	taskErr error          // the last SubmitTask result
@@ -143,12 +149,17 @@ func (w *world) begin() error {
 	if w.tasks.MaxDepth > 0 {
 		extra = append(extra, prompt.Block{Name: "tool-task", Source: prompt.SourceTool, Order: 599, Text: TaskBlock})
 	}
+	extra = append(extra, w.plugSkills()...)
+	extra = append(extra, w.plugMCP()...)
 	set, _, err := prompt.Load(w.globalDir(), w.cwd(), prompt.Env{OS: "test", Shell: "sh", Dir: w.cwd(), Date: "2026-01-01", Model: "m"}, extra...)
 	if err != nil {
 		return err
 	}
 	w.set = set
 	w.srv = llmtest.New(w.tb, w.replies...)
+	for _, id := range w.listed {
+		w.srv.Models = append(w.srv.Models, llmtest.Model{ID: id})
+	}
 	var ctx context.Context
 	ctx, w.cancel = context.WithCancel(context.Background())
 	deps := Deps{

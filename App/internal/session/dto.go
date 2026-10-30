@@ -17,21 +17,23 @@ const Version = 1
 
 // Header is the first line of a SessionFile.
 type Header struct {
-	V       int       `json:"v"`
-	ID      string    `json:"id"`
-	Cwd     string    `json:"cwd"`
-	Model   string    `json:"model"`
-	Started time.Time `json:"started"`
+	V        int       `json:"v"`
+	ID       string    `json:"id"`
+	Cwd      string    `json:"cwd"`
+	Model    string    `json:"model"`
+	Started  time.Time `json:"started"`
+	Provider string    `json:"provider,omitempty"` // the Source at the start (R-101); "" = the configured one
 }
 
 // record is one line of the file. Exactly one of the payload fields is set;
 // a header line has V != 0 and none of them.
 type record struct {
-	V       int       `json:"v,omitempty"`
-	ID      string    `json:"id,omitempty"`
-	Cwd     string    `json:"cwd,omitempty"`
-	Model   string    `json:"model,omitempty"`
-	Started time.Time `json:"started,omitzero"`
+	V        int       `json:"v,omitempty"`
+	ID       string    `json:"id,omitempty"`
+	Cwd      string    `json:"cwd,omitempty"`
+	Model    string    `json:"model,omitempty"`
+	Started  time.Time `json:"started,omitzero"`
+	Provider string    `json:"provider,omitempty"` // the header's Source, or a switch line (the last one wins)
 
 	Msg     *msgRecord     `json:"msg,omitempty"`
 	Patch   []patchRecord  `json:"patch,omitempty"`

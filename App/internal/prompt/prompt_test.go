@@ -560,3 +560,24 @@ func TestLoad_OverrideOnlyBaseAndToolBlocks(t *testing.T) {
 		t.Errorf("names = %s, want base,style,project,env", got)
 	}
 }
+
+// A run-time block (the Skill list, the MCP instructions) changes its text through SetText; an
+// empty text leaves no blank gap in Build.
+func TestSetText_ReplacesAndEmptyLeavesNoGap(t *testing.T) {
+	set, _, err := Load(t.TempDir(), t.TempDir(), Env{OS: "x"}, Block{Name: "skills", Source: SourceTool, Order: 1500, Text: "Skills:\n- a: A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(set.Build(), "- a: A") {
+		t.Fatal("initial text missing")
+	}
+	if err := set.SetText("skills", ""); err != nil || strings.Contains(set.Build(), "\n\n\n") || strings.HasSuffix(set.Build(), "\n\n") {
+		t.Fatalf("empty text: %v %q", err, set.Build())
+	}
+	if err := set.SetText("skills", "Skills:\n- b: B"); err != nil || !strings.Contains(set.Build(), "- b: B") {
+		t.Fatalf("replaced: %v", err)
+	}
+	if err := set.SetText("nope", "x"); err == nil {
+		t.Fatal("unknown block accepted")
+	}
+}

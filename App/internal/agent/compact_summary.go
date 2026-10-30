@@ -52,11 +52,14 @@ func (a *Agent) summarize(ctx context.Context, s span, rec *summaryRecord) (stri
 
 // summaryRequest is the Request for one chunk: the chosen model, the same Extra, no tools.
 func (a *Agent) summaryRequest(input string) chat.Request {
+	a.mu.Lock()
+	model, extra := a.model, a.src.Extra
+	a.mu.Unlock()
 	return chat.Request{
-		Model:     a.Model(),
+		Model:     model,
 		Messages:  []chat.Message{{Role: chat.RoleSystem, Content: summaryPrompt}, {Role: chat.RoleUser, Content: input}},
 		MaxTokens: summaryMaxTokens,
-		Extra:     a.deps.Extra,
+		Extra:     extra,
 	}
 }
 
@@ -97,7 +100,7 @@ func (a *Agent) chunks(s span) [][]string {
 // ask performs one summary request and reads its stream to the end. Usage is ignored: the
 // meter only follows the Turn requests.
 func (a *Agent) ask(ctx context.Context, req chat.Request) (string, error) {
-	ch, err := a.deps.Provider.Stream(ctx, req)
+	ch, err := a.provider().Stream(ctx, req)
 	if err != nil {
 		return "", err
 	}

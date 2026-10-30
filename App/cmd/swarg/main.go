@@ -18,9 +18,10 @@ import (
 
 	"swarg/internal/agent"
 	"swarg/internal/config"
-	"swarg/internal/llm/openai"
+	"swarg/internal/mcp"
 	"swarg/internal/prompt"
 	"swarg/internal/session"
+	"swarg/internal/skills"
 	"swarg/internal/tools"
 	"swarg/internal/ui"
 )
@@ -67,9 +68,12 @@ func run() (int, error) {
 	if o.trace {
 		return runTrace(sdir, o.traceID, os.Stdout)
 	}
-	cfg, err := loadConfig(o.configPath, dir)
+	cfg, layers, err := loadConfig(o.configPath, dir, cwd)
 	if err != nil {
 		return 2, err
+	}
+	for _, w := range layers.Warnings { // a project file tried to lower safety (R-96)
+		fmt.Fprintf(os.Stderr, "swarg: %s\n", w)
 	}
 	cfg.Override(o.providerOverride())
 	if err := cfg.Validate(); err != nil {
@@ -112,9 +116,38 @@ func run() (int, error) {
 	if !cfg.Web.Confirm {
 		all = tools.FreeWeb(all)
 	}
+	sk, skWarnings := skills.Load(filepath.Join(dir, "skills"), cwd, cfg.Skills.Disabled)
+	for _, w := range skWarnings {
+		fmt.Fprintf(os.Stderr, "swarg: %s\n", w)
+	}
+	if sk.Len() > 0 { // no Skills: no skill Tool, no list (R-89)
+		all = append(all, sk.Tool())
+	}
 	ts, err := tools.NewSet(all, cfg.Tools.Disabled)
 	if err != nil {
 		return 2, err
+	}
+	sc := newScopes(dir, cwd)
+	approvals, err := config.LoadApprovals(dir) // MCP approvals and one-time notices
+	if err != nil {
+		return 2, err
+	}
+	recent, err := config.LoadRecent(dir) // the last models per Source (R-101)
+	if err != nil {
+		return 2, err
+	}
+	var mc *mcp.Client
+	if len(cfg.MCP.Servers) > 0 {
+		mc = mcp.New(cfg.MCP.Servers, mcp.Deps{Dir: cwd, Confirm: cfg.MCP.Confirm, Project: layers.ProjectServers,
+			Approved:  func(n string) bool { return approvals.Approved(cwd, n, cfg.MCP.Servers[n]) },
+			OnApprove: func(n string) error { return approvals.Approve(cwd, n, cfg.MCP.Servers[n]) }})
+		for _, w := range mc.Start(context.Background()) { // a failed server is a warning, not an exit (I-31)
+			fmt.Fprintf(os.Stderr, "swarg: %s\n", w)
+		}
+		defer mc.Close()
+	}
+	if w := extraPromptWarning(sk, mc); w != "" {
+		fmt.Fprintf(os.Stderr, "swarg: %s\n", w)
 	}
 	jobs := tools.NewJobs()
 	defer jobs.KillAll() // runs before main's os.Exit on every return path
@@ -123,16 +156,29 @@ func run() (int, error) {
 	killOnSignal(jobs, &cl)
 
 	p := cfg.Active()
-	sv, err := openSaving(sdir, resume, session.Header{Cwd: cwd, Model: p.Model},
+	sv, err := openSaving(sdir, resume, session.Header{Cwd: cwd, Model: p.Model, Provider: cfg.Provider},
 		cfg.Session.Save && !o.noSave, cfg.Session.Trace && !o.traceOff, cfg.Session.Keep, &cl, os.Stderr)
 	if err != nil {
 		return 1, err
 	}
+	if _, ok := cfg.Providers[sv.provider]; ok && sv.provider != cfg.Provider { // R-101: a resumed session keeps its Source
+		fmt.Fprintf(os.Stderr, "swarg: continuing on the session's source %s (/server changes it)\n", sv.provider)
+		cfg.Provider = sv.provider
+		cfg.Override(o.providerOverride()) // --model / --base-url apply to the Source actually used
+		if err := cfg.Validate(); err != nil {
+			return 2, err
+		}
+		p = cfg.Active()
+	}
+	if p.APIKeyEnv != "" && p.APIKey() == "" { // R-104: the key lives in the environment only
+		return 2, fmt.Errorf("provider %q: no key: set %s", cfg.Provider, p.APIKeyEnv)
+	}
+	srcs := newSources(&cfg, cwd, recent, approvals)
 	model := startModel(o.model, sv.model, p.Model) // R-30: a resumed session keeps its last model
 	if o.model == "" && sv.model != "" && sv.model != p.Model {
 		fmt.Fprintf(os.Stderr, "swarg: continuing with the session's model %s (--model changes it)\n", sv.model)
 	}
-	set, warnings, err := prompt.Load(filepath.Join(dir, "blocks"), cwd, promptEnv(cwd, model), promptBlocks(ts, cfg.Tasks.MaxDepth)...)
+	set, warnings, err := prompt.Load(filepath.Join(dir, "blocks"), cwd, promptEnv(cwd, model), promptBlocks(ts, cfg.Tasks.MaxDepth, sk, mc)...)
 	for _, w := range warnings {
 		fmt.Fprintf(os.Stderr, "swarg: %s\n", w)
 	}
@@ -143,14 +189,14 @@ func run() (int, error) {
 	send, events := ui.NewInbox()
 	approver := ui.NewApprover(o.yes)
 	approver.SetAuto(cfg.Tools.AutoApprove)
-	client := openai.New(p.BaseURL, p.APIKey(), nil)
-	client.IdleTimeout = p.IdleTimeout() // R-63
-	first := model                       // the agent starts with the session's own model; a --model flag is a change
+	client := srcs.client(cfg.Provider) // R-63: the idle limit of the provider
+	first := model                      // the agent starts with the session's own model; a --model flag is a change
 	if sv.model != "" {
 		first = sv.model
 	}
 	var a *agent.Agent
 	a = agent.New(agent.Deps{
+		Source:       cfg.Provider,
 		Provider:     client,
 		SystemPrompt: set.Build,
 		Model:        first,
@@ -159,8 +205,8 @@ func run() (int, error) {
 		Extra:        p.ExtraBody,
 		ThinkExtra:   p.ThinkingBody(),
 		ThinkTokens:  p.ThinkingLimit(),
-		OnEvent:      onModel(set, send),
-		Tools: toolRunner{set: ts, env: tools.Env{
+		OnEvent:      onModel(set, srcs, send),
+		Tools: toolRunner{set: ts, mcp: mc, env: tools.Env{
 			Root:         root,
 			Dir:          cwd,
 			OS:           runtime.GOOS,
@@ -179,7 +225,7 @@ func run() (int, error) {
 		Store:       sv.store,
 		Trace:       sv.trace,
 		AutoCompact: cfg.Context.AutoCompact,
-		LimitFor:    p.LimitFor, // R-41: the ContextLimit follows the model
+		LimitFor:    srcs.limitFor(cfg.Provider), // R-41: the ContextLimit follows the model (the Catalog's when known)
 		Tasks:       agent.TaskLimits{MaxDepth: cfg.Tasks.MaxDepth, MaxSteps: cfg.Tasks.MaxSteps, MaxPerTurn: cfg.Tasks.MaxPerTurn},
 	})
 	if len(sv.history) > 0 {
@@ -196,23 +242,43 @@ func run() (int, error) {
 	if err := a.SetModel(model); err != nil { // records --model over a resumed session's choice
 		return 2, err
 	}
+	srcs.a = a
+	if err := srcs.Used(model); err != nil {
+		fmt.Fprintf(os.Stderr, "swarg: %s\n", err)
+	}
 	d := ui.Deps{
 		Agent:       a,
 		Blocks:      set,
 		Events:      events,
 		Approver:    approver,
 		Jobs:        jobsView{jobs},
-		Models:      modelsView{client},
+		Models:      srcs,
+		Servers:     srcs,
+		Provider:    cfg.Provider,
 		Yes:         o.yes,
 		AutoApprove: cfg.Tools.AutoApprove,
 		Model:       model,
 		Think:       think,
 		Project:     filepath.Base(cwd),
-		Limit:       p.LimitFor(first), // the initial value; EvMeter carries the live one
+		Limit:       srcs.limitFor(cfg.Provider)(first), // the initial value; EvMeter carries the live one
 	}
 	if cfg.Session.Save {
 		d.Sessions = sv // the picker, /resume (switches the file), /rename, delete
 	}
+	if sk.Len() > 0 {
+		d.Skills = skillsView{sk, set, sc}
+	}
+	if mc != nil {
+		d.MCP = mcpView{mc, set, sc}
+		for _, s := range mc.Servers() {
+			if s.State == mcp.StateNeedsApproval {
+				fmt.Fprintf(os.Stderr, "swarg: mcp: project server %q waits for your approval: /mcp approve %s\n", s.Name, s.Name)
+			}
+		}
+	}
+	d.Scopes = sc
+	d.Config = &configView{sc: sc, cwd: cwd, cfg: &cfg, layers: &layers,
+		override: func(c *config.Config) { c.Override(o.providerOverride()) }}
 	d.History = sv.history // a resumed session pre-fills the list (the UI prints no saved hint; main does)
 	err = runUI(d)
 	cl.Run() // flush before the hint: the file is complete when the user reads it
@@ -230,32 +296,45 @@ func run() (int, error) {
 // ---------------------------------------------------------------------------
 
 // promptBlocks are the tool blocks of the SystemPrompt: the Tools' own and, when Tasks are on
-// (max_depth > 0), the `task` line of the agent's built-in Tool (Order after the last tool block).
-func promptBlocks(ts *tools.Set, maxDepth int) []prompt.Block {
+// (max_depth > 0), the `task` line of the agent's built-in Tool (Order after the last tool block);
+// then the Skill list (`skills`, R-81) when Skills are loaded and the MCP instructions (`mcp`)
+// when servers are configured. Both are run-time blocks: /skills and /mcp rewrite their text.
+func promptBlocks(ts *tools.Set, maxDepth int, sk *skills.Set, mc *mcp.Client) []prompt.Block {
 	blocks := ts.Blocks()
 	if maxDepth > 0 {
 		blocks = append(blocks, prompt.Block{Name: "tool-task", Source: prompt.SourceTool, Order: 599, Text: agent.TaskBlock, Enabled: true})
+	}
+	if sk != nil && sk.Len() > 0 {
+		blocks = append(blocks, prompt.Block{Name: "skills", Source: prompt.SourceTool, Order: 1500, Text: sk.Block(), Enabled: true})
+	}
+	if mc != nil {
+		blocks = append(blocks, prompt.Block{Name: "mcp", Source: prompt.SourceTool, Order: 1600, Text: mc.Instructions(), Enabled: true})
 	}
 	return blocks
 }
 
 // onModel passes every event on and, for a Model choice, first rewrites the env block of the
-// SystemPrompt, so the next Turn tells the model its new name (R-4, R-30).
-func onModel(set *prompt.Set, send func(agent.Event)) func(agent.Event) {
+// SystemPrompt, so the next Turn tells the model its new name (R-4, R-30), and records the model
+// as the last used one of the Source (R-101).
+func onModel(set *prompt.Set, srcs *sources, send func(agent.Event)) func(agent.Event) {
 	return func(ev agent.Event) {
 		if ev.Kind == agent.EvModel {
 			set.SetModel(ev.Text)
+			if err := srcs.Used(ev.Text); err != nil {
+				send(agent.Event{Kind: agent.EvWarning, Text: err.Error()})
+			}
 		}
 		send(ev)
 	}
 }
 
-// loadConfig loads the explicit --config path, or <dir>/config.json.
-func loadConfig(path, dir string) (config.Config, error) {
+// loadConfig loads the explicit --config path, or <dir>/config.json, with the project's
+// .swarg/config.json and config.local.json layered over it (R-95).
+func loadConfig(path, dir, cwd string) (config.Config, config.Layers, error) {
 	if path != "" {
-		return config.Load(path, true)
+		return config.LoadLayered(path, true, cwd)
 	}
-	return config.Load(filepath.Join(dir, "config.json"), false)
+	return config.LoadLayered(filepath.Join(dir, "config.json"), false, cwd)
 }
 
 // promptEnv describes the host for the environment block of the system prompt.

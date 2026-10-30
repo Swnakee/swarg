@@ -264,7 +264,7 @@ func TestStart_MainModelClearsTheScreen(t *testing.T) {
 }
 
 func TestStart_PickerClearsTheScreenAndUsesTheAltScreen(t *testing.T) {
-	p := newPicker(pickRows())
+	p := newPicker(pickRows(), "", nil)
 	var res result
 	(&rig{}).walk(p.Init(), &res)
 	if !res.cleared {

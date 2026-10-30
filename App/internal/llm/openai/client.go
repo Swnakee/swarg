@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -97,8 +98,34 @@ func (c *Client) post(ctx context.Context, body []byte, accept string) (*http.Re
 }
 
 // do sends one request to base+path (body nil = none). A non-2xx status is returned as an error
-// that carries a snippet of the response body; the body is then already closed.
+// that carries a snippet of the response body (statusError); the body is then already closed. A
+// 429 with a short Retry-After is retried once after the wait (R-103), never more.
 func (c *Client) do(ctx context.Context, method, path string, body []byte, accept string) (*http.Response, error) {
+	for attempt := 0; ; attempt++ {
+		resp, err := c.once(ctx, method, path, body, accept)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
+			return resp, nil
+		}
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, errorSnippetBytes))
+		resp.Body.Close()
+		wait := retryAfter(resp)
+		if resp.StatusCode == http.StatusTooManyRequests && attempt == 0 && wait > 0 && wait <= retryWaitMax {
+			select {
+			case <-time.After(wait):
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		return nil, statusError(resp.Status, resp.StatusCode, strings.TrimSpace(string(snippet)), wait)
+	}
+}
+
+// once sends one request; the caller reads the status.
+func (c *Client) once(ctx context.Context, method, path string, body []byte, accept string) (*http.Response, error) {
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(body)
@@ -118,12 +145,39 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, accep
 	if err != nil {
 		return nil, fmt.Errorf("cannot reach the model server at %s: %w", c.baseURL, err)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, errorSnippetBytes))
-		resp.Body.Close()
-		return nil, fmt.Errorf("model server returned %s: %s", resp.Status, strings.TrimSpace(string(snippet)))
-	}
 	return resp, nil
+}
+
+// retryWaitMax is the longest Retry-After honoured before a 429 is reported instead.
+const retryWaitMax = 30 * time.Second
+
+// retryAfter reads a Retry-After header in seconds; 0 when absent or not a number.
+func retryAfter(resp *http.Response) time.Duration {
+	n, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After")))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return time.Duration(n) * time.Second
+}
+
+// statusError words a non-2xx status for the user (R-103): the status and the body snippet always,
+// a clear cause for the common cloud statuses. The key is never part of it (I-35).
+func statusError(status string, code int, snippet string, wait time.Duration) error {
+	switch {
+	case code == http.StatusUnauthorized:
+		return fmt.Errorf("the model server refused the API key (%s): %s", status, snippet)
+	case code == http.StatusPaymentRequired:
+		return fmt.Errorf("no credits on the model server (%s): %s", status, snippet)
+	case code == http.StatusNotFound:
+		return fmt.Errorf("the model server has no such model (%s): %s; /model lists the available ones", status, snippet)
+	case code == http.StatusTooManyRequests && wait > 0:
+		return fmt.Errorf("the model server is rate limited (%s, retry after %d s): %s", status, int(wait/time.Second), snippet)
+	case code == http.StatusTooManyRequests:
+		return fmt.Errorf("the model server is rate limited (%s): try again later; %s", status, snippet)
+	case code >= 500:
+		return fmt.Errorf("the model server failed upstream (%s): %s", status, snippet)
+	}
+	return fmt.Errorf("model server returned %s: %s", status, snippet)
 }
 
 // ---------------------------------------------------------------------------
@@ -134,9 +188,11 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, accep
 type wireMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
-	// ReasoningContent echoes Message.Reasoning; the Huihui template renders it, so omitting it
-	// changes the prompt prefix and misses the server's cache.
+	// ReasoningContent and Reasoning both echo Message.Reasoning: mlx templates read
+	// reasoning_content, Ollama reads reasoning (R-64). Omitting it changes the prompt prefix and
+	// misses the server's cache.
 	ReasoningContent string        `json:"reasoning_content,omitempty"`
+	Reasoning        string        `json:"reasoning,omitempty"`
 	ToolCalls        []wireCallOut `json:"tool_calls,omitempty"`
 	ToolCallID       string        `json:"tool_call_id,omitempty"`
 	Name             string        `json:"name,omitempty"`
@@ -169,7 +225,7 @@ var emptySchema = json.RawMessage(`{"type":"object","properties":{}}`)
 func wireMessages(in []chat.Message) []wireMessage {
 	out := make([]wireMessage, len(in))
 	for i, m := range in {
-		out[i] = wireMessage{Role: string(m.Role), Content: m.Content, ReasoningContent: m.Reasoning, ToolCallID: m.ToolCallID, Name: m.Name}
+		out[i] = wireMessage{Role: string(m.Role), Content: m.Content, ReasoningContent: m.Reasoning, Reasoning: m.Reasoning, ToolCallID: m.ToolCallID, Name: m.Name}
 		for _, tc := range m.ToolCalls {
 			var wc wireCallOut
 			wc.ID, wc.Type = tc.ID, "function"

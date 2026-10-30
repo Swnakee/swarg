@@ -12,7 +12,8 @@ proxy), is verified by a script that runs the code, and is reported with trace s
     App/tests/eval/run.sh -p <blocks-dir>   # prompt variant: a blocks dir (R-49), run dir gets its name as a suffix
     python3 App/tests/eval/eval.py compare Export/eval/<run A> Export/eval/<run B>   # per-task A -> B table (status, failed calls, steps, completion tokens, wall; totals over the tasks in both runs)
 
-Needs: Colima/Docker running, an OpenAI-compatible model server on 127.0.0.1:8080 (the runner does a 1-token
+Needs: Colima/Docker running, an OpenAI-compatible model server on 127.0.0.1:8080 or at
+`SWARG_MODEL_HOST_URL` (e.g. an Ollama server on another machine; the sandbox proxy forwards to it) (the runner does a 1-token
 health check and stops with exit 3 if it is down), the `swarg` build with sessions (`--continue`)
 for multi-turn tasks. Tasks run sequentially (single-lane server). If another e2e run holds the
 lock the runner waits (up to `SWARG_EVAL_LOCK_WAIT`, default 1800 s). Ctrl+C finishes the current
@@ -37,9 +38,20 @@ Output: `Export/eval/<timestamp>-<model>[-<variant>]/`
         task.md      line 1: one-line description; the rest: user turns separated by a line `---`
         fixture/     files copied to /work (optional)
         check.sh     POSIX sh, runs in /work after swarg ends; prints "PASS: reason" or "FAIL: reason"; exit 0/1
+        config.json  optional: the task's own swarg settings (skills, mcp servers), merged over the base config
 
-Categories: `edit`, `multistep`, `shell`, `context`, `long`, `robust`, `language`
-(the prefix before the first `-` is the category).
+Categories: `edit`, `multistep`, `shell`, `context`, `long`, `robust`, `language`, `code`,
+`web`, `skill`, `mcp`, `mcp-http`, `combo` (the category is the prefix before the first `-nn-`). `skill` (T8 S): the
+model picks a project Skill by itself, applies one on `/skill <name>`, cannot apply a disabled one.
+`mcp` (T8 M): a fact known only to the demo MCP server (`mcp/mcp_demo.py`, reached from the fixture
+through a symlink `tools/mcp_demo.py`), a server that fails to start, a disabled server. `mcp-http`
+(T9): the same tools behind `mcp/mcp_http.py` (Streamable HTTP, bearer token) in its own container
+`mcp.test` on the sandbox network (`SWARG_MCP_DIR`, set by `run.sh` for these tasks; the token reaches
+the agent as `MCP_TOKEN`): a working server by URL, a server without the token (401), a URL nobody
+answers. `combo`:
+web + skill + MCP in one job. `code` (T7) holds realistic jobs: a failing
+suite, a feature across files, a refactor, a CLI with own tests, a stack trace, a 25-file repo, a
+250-line CSS, a git flow, a site with login and self-written checks, a JSON-lines tool process.
 
 How a run works (`driver.sh` is the container command):
 1. `eval.py prep` copies `fixture/` and puts `check.sh`, `driver.sh` and `turn-NN.txt` into `/work/.eval/`.
@@ -76,3 +88,23 @@ wall time of the agent turns + trace. Without a trace (build older than sessions
 - A denial scenario needs `SWARG_ASK=1` and an interactive answer; not covered (plain mode stdin is the prompt).
 - Language/robust checks are keyword heuristics; read the transcript of a failing task before blaming the model.
 - Results vary run to run (sampling); compare models on several runs.
+
+## Fake web (web-* tasks)
+
+The sandbox has no internet, so `web-*` tasks run against a deterministic fake web in
+`web/`: `server.py` (Python stdlib) serves `site/<host>/<path>` by the Host header and a
+SearXNG-compatible `http://search.test/search?q=..&format=json` (pages ranked by how many query
+words they contain, at least half; a page with `noindex` in its first 400 bytes is reachable only
+through links). The sites are fictional (Zentry, Lumora Labs, OrbitKV) so the model cannot answer
+from memory.
+
+Wiring: `run.sh` exports `SWARG_WEB_DIR=web` for `web-*` and `combo-*` tasks; `sandbox/run.sh` then starts one
+more container `swarg-e2e-web` (same image, read-only, no capabilities) on the internal network
+with the aliases `search.test` and every folder name under `site/`. `eval.py prep` merges
+`web/config.json` (`searx_url`, `allow_private`, `confirm: false`) over the task config (the
+`SWARG_EVAL_CONFIG` file or the baked auto-approve one), then the task's `config.json` over that.
+A new site = a new folder under `site/`. A `check.sh` may read the raw trace
+(`.eval/traces/*.jsonl`, one JSON record per line, `"kind":"tool_start"` with `d.name`) to assert
+that a tool was or was not called.
+Test the server alone: `python3 web/server.py web/site 18931` and
+`curl -H 'Host: search.test' 'http://127.0.0.1:18931/search?q=zentry&format=json'`.

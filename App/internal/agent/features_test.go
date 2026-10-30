@@ -50,9 +50,13 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	registerSessionSteps(sc, w)
 	registerSessionNameSteps(sc, w)
 	registerTraceSteps(sc, w)
+	registerConfigSteps(sc, w)
+	registerProviderSteps(sc, w)
 	registerCompactionSteps(sc, w)
 	registerModelSteps(sc, w)
 	registerThinkSteps(sc, w)
 	registerTaskSteps(sc, w)
 	registerActivitySteps(sc, w)
+	registerSkillsSteps(sc, w)
+	registerMCPSteps(sc, w)
 }

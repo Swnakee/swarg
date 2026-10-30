@@ -9,6 +9,7 @@
 import csv
 import json
 import os
+import re
 import shutil
 import sys
 
@@ -32,6 +33,20 @@ def split_task(path):
     return desc, [t for t in turns if t]
 
 
+def merge(dst, src):
+    """Deep-merge dict src into dst."""
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            merge(dst[k], v)
+        else:
+            dst[k] = v
+
+
+def uses_fake_web(task):
+    """web-* and combo-* tasks run against the fake web (run.sh starts it for the same names)."""
+    return task.startswith("web-") or task.startswith("combo-")
+
+
 def prep(task_dir, dest):
     desc, turns = split_task(os.path.join(task_dir, "task.md"))
     if not turns:
@@ -44,8 +59,20 @@ def prep(task_dir, dest):
     shutil.copy(os.path.join(task_dir, "check.sh"), os.path.join(dest, ".eval", "check.sh"))
     shutil.copy(os.path.join(here, "driver.sh"), os.path.join(dest, ".eval", "driver.sh"))
     cfg = os.environ.get("SWARG_EVAL_CONFIG")  # experiment: a whole swarg config.json for every task
-    if cfg:
-        shutil.copy(cfg, os.path.join(dest, ".eval", "config.json"))
+    name = os.path.basename(os.path.normpath(task_dir))
+    base = json.load(open(cfg)) if cfg else {"tools": {"auto_approve": True}}
+    layered = False
+    if uses_fake_web(name):
+        # point the web tools at the fake web (web/config.json merged over the config)
+        merge(base, json.load(open(os.path.join(here, "web", "config.json"))))
+        layered = True
+    task_cfg = os.path.join(task_dir, "config.json")  # a task's own settings (skills, mcp servers)
+    if os.path.isfile(task_cfg):
+        merge(base, json.load(open(task_cfg)))
+        layered = True
+    if layered or cfg:
+        with open(os.path.join(dest, ".eval", "config.json"), "w") as f:
+            json.dump(base, f)
     for i, t in enumerate(turns, 1):
         with open(os.path.join(dest, ".eval", "turn-%02d.txt" % i), "w", encoding="utf-8") as f:
             f.write(t + "\n")
@@ -116,7 +143,7 @@ def collect(task, out, jsonl):
     if len(parts) == 2:
         t0, t1 = int(parts[0]), int(parts[1])
     turns_txt = read(os.path.join(ev, "turns.txt")).strip().splitlines()
-    row = dict(task=task, category=task.split("-")[0], status=status, reason=reason,
+    row = dict(task=task, category=re.sub(r"-\d.*$", "", task), status=status, reason=reason,
                turns=len(turns_txt), wall_s=t1 - t0, bad_exit=sum(1 for t in turns_txt if not t.endswith("exit=0")))
     row.update(trace_stats(os.path.join(ev, "traces")))
     with open(jsonl, "a", encoding="utf-8") as f:

@@ -38,6 +38,7 @@ type Loaded struct {
 	goodSize int64 // size of the file up to the last complete record
 	maxSeq   int
 	model    string // the last Model choice line; "" = none
+	provider string // the last provider line; "" = none
 	thinking bool   // the last thinking line; false = none or off
 }
 
@@ -52,6 +53,15 @@ func (l Loaded) Model() string {
 		return l.model
 	}
 	return l.Header.Model
+}
+
+// Provider is the Source the Session runs on at its end: the last provider line, else the header's
+// provider; "" when the file has neither (written before T11 or on the configured Source).
+func (l Loaded) Provider() string {
+	if l.provider != "" {
+		return l.provider
+	}
+	return l.Header.Provider
 }
 
 // Thinking is the thinking mode at the end of the Session; a file with no thinking line is off.
@@ -106,7 +116,7 @@ func load(path string) (Loaded, error) {
 			if r.V != Version {
 				return Loaded{}, fmt.Errorf("session: %s: unsupported version %d", path, r.V)
 			}
-			l.Header = Header{V: r.V, ID: r.ID, Cwd: r.Cwd, Model: r.Model, Started: r.Started}
+			l.Header = Header{V: r.V, ID: r.ID, Cwd: r.Cwd, Model: r.Model, Started: r.Started, Provider: r.Provider}
 			continue
 		}
 		if err := l.apply(r); err != nil {
@@ -161,6 +171,8 @@ func (l *Loaded) apply(r record) error {
 		l.thinking = *r.Think
 	case r.Model != "": // a Model choice (only the header line has V set)
 		l.model = r.Model
+	case r.Provider != "": // a Source switch (R-101)
+		l.provider = r.Provider
 	}
 	return nil
 }

@@ -59,3 +59,20 @@ Feature: Thinking mode
       And the user resumed it
       When the user submits "again"
       Then the request has thinking off with temperature 0.7 and at most 2048 tokens
+
+  Rule: An Ollama Provider is asked to think or not to think with every request (R-64)
+
+    @S-381
+    Scenario: An Ollama Provider is asked to think when thinking is on
+      Given an Ollama Provider
+      And the user switched thinking on
+      When the user submits "hi"
+      Then the Provider is asked to think
+
+    @S-382
+    Scenario: An Ollama Provider is asked not to think when thinking is off
+      Given an Ollama Provider
+      And the user switched thinking on
+      And the user switched thinking off
+      When the user submits "hi"
+      Then the Provider is asked not to think

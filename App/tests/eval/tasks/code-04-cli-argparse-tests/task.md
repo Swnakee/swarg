@@ -1,0 +1,2 @@
+Write a CLI with argparse and its own tests, then run the tests.
+Write wc.py: a small clone of wc using argparse. Options -l (count lines) and -w (count words); one or more file arguments; the argument "-" means stdin. Print "<count> <name>" per file (name "-" for stdin). Then write test_wc.py with tests for lines, words and stdin, runnable as python3 test_wc.py, and run it until it passes. Sample files a.txt and b.txt are here.

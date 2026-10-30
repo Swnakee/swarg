@@ -21,6 +21,7 @@ var errStreamClosed = errors.New("agent: stream closed without a final event")
 
 // Deps are the injected dependencies of an Agent.
 type Deps struct {
+	Source       string // the name of the first Source (the config's provider name); "" is fine
 	Provider     Provider
 	SystemPrompt func() string // required; called at the start of every turn
 	Model        string
@@ -73,6 +74,7 @@ type Agent struct {
 	aborted     bool // Abort (or a second Interrupt) of the running turn
 	stopped     bool
 	thinking    bool            // the thinking mode (R-60)
+	src         Source          // the model server in use and its presets (R-100)
 	model       string          // the Model choice: the model id of the next request (R-30)
 	chain       []*conversation // the running Chain: the Session, then the Tasks inside it; empty when idle
 	taskSeq     int             // Task ids handed out
@@ -97,7 +99,8 @@ type Agent struct {
 // that runs between Turns.
 type qitem struct {
 	text    string
-	task    bool // the text is the goal of a /task Turn; it never joins a running Turn
+	task    bool   // the text is the goal of a /task Turn; it never joins a running Turn
+	skill   string // a /skill Turn: the Skill applied before the text is answered (R-83)
 	load    *loadItem
 	compact *compactItem
 }
@@ -117,20 +120,24 @@ func New(deps Deps) *Agent {
 	a := &Agent{
 		deps:  deps,
 		model: deps.Model,
-		wake:  make(chan struct{}, 1),
-		intr:  make(chan struct{}, 1),
+		src: Source{Name: deps.Source, Provider: deps.Provider, Model: deps.Model, MaxTokens: deps.MaxTokens,
+			ContextLimit: deps.ContextLimit, Extra: deps.Extra, ThinkExtra: deps.ThinkExtra, ThinkTokens: deps.ThinkTokens,
+			LimitFor: deps.LimitFor, Health: deps.Health},
+		wake: make(chan struct{}, 1),
+		intr: make(chan struct{}, 1),
 	}
 	a.meter = meter{limit: a.limitFor(deps.Model)}
 	a.idle = sync.NewCond(&a.mu)
 	return a
 }
 
-// limitFor is the ContextLimit of a model id: Deps.LimitFor, else Deps.ContextLimit.
+// limitFor is the ContextLimit of a model id on the Source in use: its LimitFor, else its
+// ContextLimit. Caller holds mu (or the Agent is not started yet).
 func (a *Agent) limitFor(model string) int {
-	if a.deps.LimitFor != nil {
-		return a.deps.LimitFor(model)
+	if a.src.LimitFor != nil {
+		return a.src.LimitFor(model)
 	}
-	return a.deps.ContextLimit
+	return a.src.ContextLimit
 }
 
 // limit is the Session's current ContextLimit (locks).
@@ -390,7 +397,7 @@ func (a *Agent) queuedTextsLocked() (n int) {
 // join a running Turn, the rest waits (a goal always starts its own Turn, R-40). Caller holds mu.
 func (a *Agent) leadingTextsLocked() int {
 	for i, it := range a.queue {
-		if it.control() || it.task {
+		if it.control() || it.task || it.skill != "" {
 			return i
 		}
 	}

@@ -73,10 +73,33 @@ type SessionsAPI interface {
 	Current() string
 }
 
-// ModelsAPI lists the models the Provider offers (main adapts openai.Client.Models). Deps.Models
-// may be nil: /model then can only set an id given on the command line.
+// ModelRow is one model of the active Source as /model lists it (R-101, R-102): Name and Price
+// are empty on a plain server; Price is "free" or the price text; Recent marks a model used before
+// on this Source (listed first).
+type ModelRow struct {
+	ID, Name, Price string
+	Recent          bool
+}
+
+// ModelsAPI lists the models of the active Source (main adapts the Catalog). Deps.Models may be
+// nil: /model then can only set an id given on the command line.
 type ModelsAPI interface {
-	List(ctx context.Context) ([]string, error)
+	List(ctx context.Context) ([]ModelRow, error)
+}
+
+// ServerRow is one configured Source as /server lists it: State is "ok", "down: ...",
+// "no key: set X" or "bad config: ..."; Active marks the one in use.
+type ServerRow struct {
+	Name, Type, Address, State string
+	Active                     bool
+}
+
+// ServersAPI is what /server needs (R-100); main adapts the config and the clients. Switch makes
+// name the Source of the agent and returns the one-time cloud notice when it applies (R-104).
+// Deps.Servers may be nil: the command then says so.
+type ServersAPI interface {
+	Servers(ctx context.Context) ([]ServerRow, error)
+	Switch(name string) (notice string, err error)
 }
 
 // Optional parts of the agent, used through a type assertion so a core without them (or the
@@ -97,7 +120,80 @@ type (
 	taskSubmitter interface {
 		SubmitTask(goal string) error
 	} // /task
+	skillSubmitter interface {
+		SubmitSkill(name, text string) error
+	} // /skill
 )
+
+// SkillsAPI is what /skills and /skill need; main adapts the skills package (ui imports no tools).
+// SetEnabled applies for this run and persists `skills.disabled` into the scope's config file
+// ("" = this run only).
+type SkillsAPI interface {
+	List() []SkillRow
+	SetEnabled(name string, on bool, scope string) error
+}
+
+// SkillRow is one Skill as the UI shows it.
+type SkillRow struct {
+	Name, Description, Source string
+	Enabled                   bool
+}
+
+// MCPAPI is what /mcp needs; main adapts the mcp client. SetEnabled applies for this run and
+// persists `mcp.servers.<name>.disabled` into the scope's file ("" = this run only); Approve
+// stores the user's approval of a project server and starts it (R-97).
+type MCPAPI interface {
+	Servers() []MCPServerRow
+	Tools(server string) (tools []MCPToolRow, stderr string, err error)
+	SetEnabled(server string, on bool, scope string) error
+	Restart(server string) error
+	Approve(server string) error
+}
+
+// MCPServerRow is one MCP Server as /mcp lists it.
+type MCPServerRow struct {
+	Name, State, Reason string
+	Tools               int
+	Enabled             bool
+	Source, Transport   string // "global" / "project", "stdio" / "http"
+}
+
+// NotSavedError says a switch applied for this run but could not be written to its scope's file
+// (SkillsAPI.SetEnabled, MCPAPI.SetEnabled): the UI shows the new state with the reason.
+type NotSavedError struct{ Err error }
+
+func (e *NotSavedError) Error() string { return "not saved: " + e.Err.Error() }
+func (e *NotSavedError) Unwrap() error { return e.Err }
+
+// ScopesAPI tells where settings can be saved: Scopes lists them ("global", and "project" inside a
+// project), Default is the one a command without a scope uses (R-98). Deps.Scopes may be nil: then
+// switches apply to this run only.
+type ScopesAPI interface {
+	Scopes() []string
+	Default() string
+}
+
+// Setting is one row of /config: Kind is "bool", "int" or "string"; Min/Max/Step bound an int;
+// Live names what the app applies at once ("auto", "think", "model"), "" = at the next start.
+type Setting struct {
+	Key, Label, Kind string
+	Value            any
+	Min, Max, Step   int
+	Scope            string // where the effective value comes from ("global" / "project")
+	Live             string
+}
+
+// ConfigAPI is what /config needs; main adapts the loaded config and config.Set.
+type ConfigAPI interface {
+	Settings() []Setting
+	Set(scope, key string, value any) error
+}
+
+// MCPToolRow is one tool of /mcp <server>.
+type MCPToolRow struct {
+	Name, Description string
+	ReadOnly, Offered bool
+}
 
 // Deps is everything a UI needs. Events carries agent events (fed by the
 // agent's OnEvent, see NewInbox); the UI starts the agent only after it is ready to
@@ -112,10 +208,16 @@ type Deps struct {
 	Jobs        JobsAPI
 	Sessions    SessionsAPI
 	Models      ModelsAPI      // optional: the model list of /model
+	Servers     ServersAPI     // optional: /server (nil = the command says so)
+	Skills      SkillsAPI      // optional: /skills, /skill and /<skill> (nil = no Skills loaded)
+	MCP         MCPAPI         // optional: /mcp (nil = no MCP servers configured)
+	Scopes      ScopesAPI      // optional: the save scopes of /skills, /mcp and /config
+	Config      ConfigAPI      // optional: /config (nil = the command says so)
 	History     []chat.Message // optional: the list is pre-filled from it at startup (a resumed session)
 	SavedHint   string         // optional: main prints it after Run returns (e.g. "session saved: swarg --continue"); the UI prints nothing
 	Think       bool           // the thinking mode at start; EvThinking events update the Bottom panel
 	Model       string         // the Model choice at start; EvModel events update the Bottom panel
+	Provider    string         // the Source name at start ("" = not shown); EvProvider events update the panel
 	Project     string
 	Limit       int
 	Yes         bool

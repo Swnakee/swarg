@@ -46,3 +46,6 @@ func (s *Store) Thinking(on bool) error { return s.w.Thinking(on) }
 
 // Model records a Model choice.
 func (s *Store) Model(name string) error { return s.w.Model(name) }
+
+// Provider records a Source switch.
+func (s *Store) Provider(name string) error { return s.w.Provider(name) }

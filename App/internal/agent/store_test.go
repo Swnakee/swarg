@@ -65,6 +65,7 @@ func (f *fakeStore) Repair(ms []chat.Message) error { return f.add(storeOp{kind:
 func (f *fakeStore) Flush() error                   { return f.add(storeOp{kind: "flush"}) }
 func (f *fakeStore) Thinking(on bool) error         { return f.add(storeOp{kind: "thinking", on: on}) }
 func (f *fakeStore) Model(name string) error        { return f.add(storeOp{kind: "model", model: name}) }
+func (f *fakeStore) Provider(name string) error     { return f.add(storeOp{kind: "provider", model: name}) }
 
 func (f *fakeStore) all() []storeOp {
 	f.mu.Lock()

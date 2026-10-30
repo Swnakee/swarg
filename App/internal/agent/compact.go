@@ -133,8 +133,8 @@ func (a *Agent) runCompact(ctx context.Context, it *compactItem) {
 		}
 		a.emit(Event{Kind: EvCompacted, Spans: out.replaced, Before: before, After: after})
 	}
-	if aborted && a.deps.Health != nil {
-		go a.checkHealth(ctx)
+	if health := a.health(); aborted && health != nil {
+		go a.checkHealth(ctx, health)
 	}
 	a.mu.Lock()
 	a.queue = a.queue[1:] // only now: Busy and Wait cover the Store and Trace calls of the run

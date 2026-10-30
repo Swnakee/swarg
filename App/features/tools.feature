@@ -30,6 +30,12 @@ Feature: Tools
       When the user submits "go"
       Then the second request contains a ToolResult starting with "error: unknown tool"
 
+    @S-635
+    Scenario: An unknown Tool name close to an offered one suggests it
+      Given a Provider that calls the Tool "write" and then answers "ok"
+      When the user submits "go"
+      Then the second request contains a ToolResult mentioning "did you mean write_file"
+
     @S-041
     Scenario: Invalid JSON arguments return an error ToolResult
       Given a Provider that calls "read_file" with the arguments "{not json" and then answers "ok"
@@ -117,3 +123,37 @@ Feature: Tools
       And a Provider that calls "edit_file" replacing "b" with "c" in "w.txt" and then answers "ok"
       When the user submits "edit"
       Then the file "w.txt" still has Windows line endings
+
+  Rule: A path that repeats the name of the project folder is refused with the right path (R-66)
+
+    @S-383
+    Scenario: A write under a folder named like the project folder is refused with a hint
+      Given approval is granted
+      And a Provider that calls "write_file" for "work/greet.py" with "x" and then answers "ok"
+      When the user submits "write"
+      Then the second request contains a ToolResult mentioning "paths are relative to it"
+
+    @S-384
+    Scenario: The same path is a normal path once that subfolder exists
+      Given a file "work/keep.txt" with the text "there"
+      And approval is granted
+      And a Provider that calls "write_file" for "work/greet.py" with "x" and then answers "ok"
+      When the user submits "write"
+      Then the file "work/greet.py" contains "x"
+
+  Rule: write_file appends on request so a long file can be written in parts (R-67)
+
+    @S-385
+    Scenario: An appending write adds the content to the end of the file
+      Given a file "a.txt" with the text "one"
+      And approval is granted
+      And a Provider that calls "write_file" appending "two" to "a.txt" and then answers "ok"
+      When the user submits "write"
+      Then the file "a.txt" contains "onetwo"
+
+    @S-386
+    Scenario: An appending write to a missing file creates it
+      Given approval is granted
+      And a Provider that calls "write_file" appending "two" to "new.txt" and then answers "ok"
+      When the user submits "write"
+      Then the file "new.txt" contains "two"

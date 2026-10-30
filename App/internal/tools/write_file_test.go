@@ -197,3 +197,61 @@ func TestWriteFile_MissingPathShowsCallShape(t *testing.T) {
 		}
 	}
 }
+
+// R-66: "work/x" written from the project folder "work" is a slip of small models (the cwd name
+// repeated); without a "work" subfolder the write is refused with the right path in the hint.
+func TestWriteFile_PathRepeatingTheProjectFolderIsRefused(t *testing.T) {
+	env := newTestEnv(t, nil)
+	base := filepath.Base(env.Dir)
+	_, err := WriteFile{}.Run(context.Background(), env, json.RawMessage(`{"path":"`+base+`/sub/a.txt","content":"x"}`))
+	if err == nil || !strings.Contains(err.Error(), `"sub/a.txt"`) || !strings.Contains(err.Error(), base) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := env.Root.Stat(base); err == nil {
+		t.Fatal("the nested folder was created")
+	}
+	if err := env.Root.Mkdir(base, 0o755); err != nil { // the subfolder exists: a normal path
+		t.Fatal(err)
+	}
+	if _, err := (WriteFile{}).Run(context.Background(), env, json.RawMessage(`{"path":"`+base+`/a.txt","content":"x"}`)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// R-67: "append": true adds the content to the end; a missing file is created.
+func TestWriteFile_AppendAddsToTheEnd(t *testing.T) {
+	env := newTestEnv(t, nil)
+	run := func(args string) Result {
+		res, err := WriteFile{}.Run(context.Background(), env, json.RawMessage(args))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	if res := run(`{"path":"a.txt","content":"one\n","append":true}`); res.Brief != "1 lines" {
+		t.Fatalf("brief = %q", res.Brief)
+	}
+	if res := run(`{"path":"a.txt","content":"two\n","append":true}`); res.Output != "appended to a.txt" {
+		t.Fatalf("output = %q", res.Output)
+	}
+	if got, _ := env.Root.ReadFile("a.txt"); string(got) != "one\ntwo\n" {
+		t.Fatalf("content = %q", got)
+	}
+	run(`{"path":"a.txt","content":"three\n"}`) // without append the file is replaced, as before
+	if got, _ := env.Root.ReadFile("a.txt"); string(got) != "three\n" {
+		t.Fatalf("content = %q", got)
+	}
+}
+
+func TestWriteFile_AppendKeepsCRLF(t *testing.T) {
+	env := newTestEnv(t, nil)
+	if err := env.Root.WriteFile("w.txt", []byte("a\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (WriteFile{}).Run(context.Background(), env, json.RawMessage(`{"path":"w.txt","content":"b\n","append":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := env.Root.ReadFile("w.txt"); string(got) != "a\r\nb\r\n" {
+		t.Fatalf("content = %q", got)
+	}
+}

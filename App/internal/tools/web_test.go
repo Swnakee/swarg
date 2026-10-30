@@ -104,7 +104,7 @@ func TestWebFetch_HTMLToText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "My Page\n\n# Intro\n\nHello the link and bold text.\n\n- one\n- two\n\n## Next\n\ntail"
+	want := "My Page\n\n# Intro\n\nHello the link (" + srv.URL + "/x) and bold text.\n\n- one\n- two\n\n## Next\n\ntail"
 	if res.Output != want {
 		t.Errorf("got:\n%q\nwant:\n%q", res.Output, want)
 	}
@@ -122,15 +122,72 @@ func TestWebFetch_Charset(t *testing.T) {
 	}
 }
 
-func TestWebFetch_LongPageIsCutHeadAndTail(t *testing.T) {
-	srv := pageServer(t, "text/plain", strings.Repeat("line of text\n", 3000))
+func fetchPage(env Env, url string, page int) (Result, error) {
+	args, _ := json.Marshal(map[string]any{"url": url, "page": page})
+	return WebFetch{}.Run(context.Background(), env, args)
+}
+
+// longText has numbered lines, so every part of it can be found again (about 3 pages).
+func longText() string {
+	var b strings.Builder
+	for i := 1; i <= 1200; i++ {
+		fmt.Fprintf(&b, "line %04d of text\n", i)
+	}
+	return b.String()
+}
+
+// R-70: a long page comes in pages; nothing in the middle is lost.
+func TestWebFetch_LongPageIsPaged(t *testing.T) {
+	srv := pageServer(t, "text/plain", longText())
 	res, err := fetch(localWeb(), srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Output) > maxPageText+200 || !strings.Contains(res.Output, "bytes cut; fetch a more specific url") ||
-		strings.Contains(res.Output, "read_file") {
-		t.Errorf("bad cut: %d bytes ...%q", len(res.Output), res.Output[len(res.Output)-60:])
+	if len(res.Output) > maxPageText+200 || !strings.HasPrefix(res.Output, "line 0001") ||
+		!strings.HasSuffix(res.Output, "[page 1 of 3; for more call web_fetch with the same url and page 2]") {
+		t.Errorf("page 1: %d bytes ...%q", len(res.Output), res.Output[len(res.Output)-80:])
+	}
+	var all strings.Builder
+	for p := 1; p <= 3; p++ {
+		r, err := fetchPage(localWeb(), srv.URL, p)
+		if err != nil {
+			t.Fatalf("page %d: %v", p, err)
+		}
+		all.WriteString(r.Output)
+	}
+	for _, want := range []string{"line 0001 ", "line 0600 ", "line 1200 "} {
+		if !strings.Contains(all.String(), want) {
+			t.Errorf("%q lost across the pages", want)
+		}
+	}
+	if r, _ := fetchPage(localWeb(), srv.URL, 3); strings.Contains(r.Output, "page 4") || !strings.Contains(r.Output, "[page 3 of 3]") {
+		t.Errorf("last page note: %q", r.Output[len(r.Output)-60:])
+	}
+}
+
+// R-70 boundary and failure: a short page has no page note; a page past the end is an error.
+func TestWebFetch_PageBounds(t *testing.T) {
+	srv := pageServer(t, "text/plain", "short")
+	if r, err := fetchPage(localWeb(), srv.URL, 1); err != nil || r.Output != "short" {
+		t.Errorf("got %q %v", r.Output, err)
+	}
+	if _, err := fetchPage(localWeb(), srv.URL, 2); err == nil || !strings.Contains(err.Error(), "only 1 page") {
+		t.Errorf("past the end: %v", err)
+	}
+	if _, err := fetchPage(localWeb(), srv.URL, -1); err == nil || !strings.Contains(err.Error(), "page must be") {
+		t.Errorf("page -1: %v", err)
+	}
+}
+
+// R-71: navigation, sidebars and footers are not page text.
+func TestWebFetch_DropsNavAsideFooter(t *testing.T) {
+	page := `<html><body><header><nav><a href="/">Home</a> | <a href="/x">Menu item</a></nav></header>
+<aside><ul><li>On this page</li></ul></aside><main><h1>Title</h1><p>Body text.</p></main>
+<footer>Copyright cookies</footer></body></html>`
+	srv := pageServer(t, "text/html", page)
+	res, err := fetch(localWeb(), srv.URL)
+	if err != nil || res.Output != "# Title\n\nBody text." {
+		t.Errorf("got %q %v", res.Output, err)
 	}
 }
 
@@ -205,5 +262,29 @@ func TestFreeWeb(t *testing.T) {
 	s, _ = NewSet(All(), nil)
 	if _, ro, confirm := s.Kind("web_search"); ro || !confirm {
 		t.Error("web_search must ask by default")
+	}
+}
+
+// R-72: links keep their address (absolute), so the model can follow them.
+func TestWebFetch_LinksKeepAddress(t *testing.T) {
+	page := `<p>See the <a href="/docs/migrate.html">migration guide</a>, <a href="https://other.example/x">x</a>,
+<a href="#top">top</a> and <a href="javascript:void(0)">js</a>.</p>`
+	srv := pageServer(t, "text/html", page)
+	res, err := fetch(localWeb(), srv.URL+"/docs/upgrade.html")
+	want := "See the migration guide (" + srv.URL + "/docs/migrate.html), x (https://other.example/x), top and js."
+	if err != nil || res.Output != want {
+		t.Errorf("got  %q %v\nwant %q", res.Output, err, want)
+	}
+}
+
+func TestWebFetch_SummaryShowsPage(t *testing.T) {
+	for args, want := range map[string]string{
+		`{"url":"https://e.org/a"}`:          "https://e.org/a",
+		`{"url":"https://e.org/a","page":1}`: "https://e.org/a",
+		`{"url":"https://e.org/a","page":2}`: "https://e.org/a page 2",
+	} {
+		if got := (WebFetch{}).Summary(json.RawMessage(args)); got != want {
+			t.Errorf("%s: got %q, want %q", args, got, want)
+		}
 	}
 }

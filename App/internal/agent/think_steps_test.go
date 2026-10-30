@@ -16,6 +16,7 @@ import (
 // thinkWorld is the state of the thinking scenarios.
 type thinkWorld struct {
 	presets  bool // the Provider sends the Qwen presets (Deps.Extra, ThinkExtra, ThinkTokens)
+	ollama   bool // the Ollama presets instead: reasoning_effort none / high (R-64)
 	replayed bool // the thinking mode of the replayed SessionFile
 }
 
@@ -32,6 +33,12 @@ func (w *world) plugThink(d *Deps) {
 		return
 	}
 	d.MaxTokens = 2048
+	if w.thk.ollama { // mirrors config.Provider{Type: "ollama"}: ExtraBody and ThinkingBody
+		d.Extra = map[string]any{"reasoning_effort": "none", "temperature": 0.7}
+		d.ThinkExtra = map[string]any{"reasoning_effort": "high", "temperature": 0.6}
+		d.ThinkTokens = 8192
+		return
+	}
 	d.Extra = map[string]any{
 		"chat_template_kwargs": map[string]any{"enable_thinking": false},
 		"temperature":          0.7,
@@ -78,6 +85,22 @@ func (w *world) requestThinks(i int, on string, temp float64, tokens int) error 
 func registerThinkSteps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^a Provider with the thinking presets$`, func() error {
 		w.thinks().presets = true
+		return nil
+	})
+	sc.Step(`^an Ollama Provider$`, func() error {
+		w.thinks().presets, w.thinks().ollama = true, true
+		return nil
+	})
+	// Ollama is asked through reasoning_effort: "high" = think, "none" = do not think (R-64)
+	sc.Step(`^the Provider is asked (not )?to think$`, func(not string) error {
+		if err := w.settle(); err != nil {
+			return err
+		}
+		want := map[string]string{"": "high", "not ": "none"}[not]
+		reqs := w.srv.Requests()
+		if got := reqs[len(reqs)-1]["reasoning_effort"]; got != want {
+			return fmt.Errorf("reasoning_effort = %v, want %q", got, want)
+		}
 		return nil
 	})
 	sc.Step(`^the user switched thinking (on|off)$`, func(mode string) error {

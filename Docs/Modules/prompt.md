@@ -9,6 +9,7 @@ API:
 - Override files (R-49): `<name>.md` in `globalDir` (no `NN-` prefix) whose stem is the name of a block `Load` already has (`base`, `tool-read_file`, `tool-task`, ...) replaces that block's Text; Order, Source and Enabled stay. Each replacement is a warning `prompt: block "base" replaced by <path>` so a stray file in the real config dir is visible. `project.md`, `env.md`, the name of a global `NN-name` block and a stem that matches no block are skipped with a warning (`tool-task.md` with Tasks off is such a case). This is the vehicle of prompt experiments (T5): variants are compared on one build.
 - `(*Set).Build() string` - enabled block texts in order, joined by a blank line. Block names are internal and never appear in the prompt (a name like `tool-read_file` made the 2B call a non-existent tool).
 - `(*Set).SetEnabled(name string, on bool) error` - unknown name returns an error listing the known names.
+- `(*Set).SetText(name, text string) error` - replaces the text of a run-time block (the `skills` list, the `mcp` instructions); an empty text makes `Build` skip the block without a blank gap. Unknown name is an error.
 - `(*Set).SetModel(model string)` - rewrites the env block's `Model:` line (main calls it on `agent.EvModel`); the block keeps its on/off state; Build shows it from the next call.
 - `(*Set).List() []BlockInfo` - `{Name, Source, Enabled, Tokens}` per block, in build order.
 - Token sizes use `chat.EstimateTokens` (the only estimator in the project).

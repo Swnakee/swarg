@@ -27,7 +27,7 @@ const (
 
 	undeliveredWarning = "the model's output was not delivered (probably a tool call that was too long or unparsable); asking it again"
 	undeliveredStop    = "stopped: the model's output was not delivered"
-	undeliveredNudge   = "Your last answer hit the output limit and nothing arrived (probably a tool call that was too long). Try again and keep tool arguments short: write big files in several smaller steps."
+	undeliveredNudge   = "Your last answer hit the output limit of %d tokens and nothing arrived (probably a tool call that was too long). Write a long file in parts: write_file the first part, then the next parts with \"append\": true."
 	droppedWarning     = "the model's answer arrived empty though it wrote tokens (probably an unclosed tool call the server dropped); asking it again"
 	droppedStop        = "stopped: the model's answer arrived empty"
 	droppedNudge       = "Your last answer arrived empty: nothing reached me (probably a tool call that was not closed). Send it again, complete."
@@ -64,6 +64,8 @@ type turnResult struct {
 	status    string          // how the loop ended (statusDone, ...); set by runLoop
 	steps     int             // Steps the loop took
 	tokens    int             // completion tokens of the Step (usage), 0 when not reported
+	sent      int             // estimated prompt tokens of the request (R-65)
+	limit     int             // max_tokens of the request, named in the undelivered nudge (R-67)
 }
 
 // runTurn runs one Turn of the Session: steps until the model answers without tool calls, the
@@ -90,8 +92,10 @@ func (a *Agent) runTurn(ctx context.Context, it qitem) {
 	var msg chat.Message
 	if it.task {
 		a.runGoal(c, it.text, &repeats)
+	} else if it.skill != "" {
+		a.runSkill(c, it.skill, &repeats)
 	}
-	if it.task && a.isInterrupted() { // the Esc ended the goal's Task: no Session request (R-11)
+	if (it.task || it.skill != "") && a.isInterrupted() { // the Esc ended the prelude: no Session request (R-11)
 		r = &turnResult{finish: chat.FinishInterrupted, status: statusInterrupted}
 		if a.wasAborted() {
 			r.status = statusAborted
@@ -103,8 +107,8 @@ func (a *Agent) runTurn(ctx context.Context, it qitem) {
 	a.chain = a.chain[:0]
 	a.mu.Unlock()
 	a.endTurn(r, msg)
-	if (a.wasAborted() || r.looped) && a.deps.Health != nil {
-		go a.checkHealth(ctx)
+	if health := a.health(); (a.wasAborted() || r.looped) && health != nil {
+		go a.checkHealth(ctx, health)
 	}
 }
 
@@ -186,7 +190,7 @@ func lostCall(r *turnResult) (warning, nudge, stop string) {
 	case r.finish == chat.FinishToolCalls:
 		return unparsedWarning, unparsedNudge, unparsedStop
 	case r.finish == chat.FinishLength && !r.looped && r.text.Len() == 0 && r.reasoning.Len() == 0:
-		return undeliveredWarning, undeliveredNudge, undeliveredStop
+		return undeliveredWarning, fmt.Sprintf(undeliveredNudge, r.limit), undeliveredStop
 	case r.finish == chat.FinishStop && r.tokens > 1 && r.text.Len() == 0 && r.reasoning.Len() == 0 && len(r.raw) == 0:
 		return droppedWarning, droppedNudge, droppedStop
 	}
@@ -219,6 +223,7 @@ func (a *Agent) stream(c *conversation, step int) *turnResult {
 	a.mu.Lock()
 	c.meter.limit = a.limitFor(a.model)
 	req := a.request(c)
+	prov := a.src.Provider
 	a.traceRequestLocked(c, step, req)
 	c.reqCancel = reqCancel
 	if a.aborted {
@@ -227,9 +232,9 @@ func (a *Agent) stream(c *conversation, step int) *turnResult {
 	a.mu.Unlock()
 	a.sync()
 
-	r := &turnResult{finish: chat.FinishError, err: errStreamClosed}
+	r := &turnResult{finish: chat.FinishError, err: errStreamClosed, sent: estimateRequest(req).Total(), limit: req.MaxTokens}
 	r.clock.start = a.deps.Now()
-	if ch, err := a.deps.Provider.Stream(reqCtx, req); err != nil {
+	if ch, err := prov.Stream(reqCtx, req); err != nil {
 		r.err = err
 	} else {
 		a.consume(c, reqCtx, ch, r)
@@ -262,11 +267,11 @@ func (a *Agent) request(c *conversation) chat.Request {
 		}
 		msgs = append(msgs, m)
 	}
-	req := chat.Request{Model: a.model, Messages: msgs, MaxTokens: a.deps.MaxTokens, Extra: a.deps.Extra, Tools: a.specs(c)}
+	req := chat.Request{Model: a.model, Messages: msgs, MaxTokens: a.src.MaxTokens, Extra: a.src.Extra, Tools: a.specs(c)}
 	if a.thinking { // R-60
-		req.Extra = mergeExtra(a.deps.Extra, a.deps.ThinkExtra)
-		if a.deps.ThinkTokens > req.MaxTokens { // never shrink a larger configured limit
-			req.MaxTokens = a.deps.ThinkTokens
+		req.Extra = mergeExtra(a.src.Extra, a.src.ThinkExtra)
+		if a.src.ThinkTokens > req.MaxTokens { // never shrink a larger configured limit
+			req.MaxTokens = a.src.ThinkTokens
 		}
 	}
 	return req
@@ -328,7 +333,11 @@ func (a *Agent) handle(c *conversation, r *turnResult, ev chat.StreamEvent) bool
 	case chat.EventUsage:
 		a.mu.Lock()
 		c.meter.setUsage(ev.Usage)
+		cut := c.meter.cut(ev.Usage.PromptTokens, r.sent)
 		a.mu.Unlock()
+		if cut != "" {
+			a.emit(c.tag(Event{Kind: EvWarning, Text: cut}))
+		}
 		r.tokens = ev.Usage.CompletionTokens
 		a.traceC(c, "usage", map[string]any{"prompt": ev.Usage.PromptTokens, "completion": ev.Usage.CompletionTokens, "cached": ev.Usage.CachedTokens})
 	case chat.EventDone:
@@ -448,8 +457,8 @@ func (a *Agent) queued() bool {
 }
 
 // checkHealth probes the server after an Abort; it runs in its own goroutine.
-func (a *Agent) checkHealth(ctx context.Context) {
-	if a.deps.Health(ctx) != nil {
+func (a *Agent) checkHealth(ctx context.Context, health func(context.Context) error) {
+	if health(ctx) != nil {
 		a.emit(Event{Kind: EvWarning, Text: busyWarning})
 	}
 }

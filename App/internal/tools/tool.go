@@ -266,6 +266,20 @@ func Rel(dir, p string) (string, error) {
 	return rel, nil
 }
 
+// nestedHint catches a path that repeats the name of the project folder ("work/x" written from
+// /work, a slip of small models) while no such subfolder exists: the right path goes into the
+// error instead of a nested copy of the folder appearing (R-66). Nil when the subfolder exists.
+func nestedHint(env Env, name string) error {
+	first, rest, found := strings.Cut(name, string(filepath.Separator))
+	if !found || first != filepath.Base(env.Dir) {
+		return nil
+	}
+	if _, err := env.Root.Stat(first); err == nil {
+		return nil
+	}
+	return fmt.Errorf("there is no %q inside the working directory %s; paths are relative to it: use %q", first, env.Dir, filepath.ToSlash(rest))
+}
+
 // Cap limits s to MaxOutput bytes of content: the head (2/3) and the tail (1/3) are kept, the
 // middle is replaced by a note with the number of cut bytes. Cuts fall on line boundaries
 // (or, inside one huge line, on UTF-8 boundaries), so the result may exceed MaxOutput by the note.

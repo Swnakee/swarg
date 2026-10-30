@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +12,6 @@ import (
 
 	"swarg/internal/agent"
 	"swarg/internal/chat"
-	"swarg/internal/llm/openai"
 	"swarg/internal/session"
 	"swarg/internal/trace"
 	"swarg/internal/ui"
@@ -132,6 +130,7 @@ type saving struct {
 	maxSeq    int
 	thinking  bool        // the resumed Session's last thinking mode
 	model     string      // the resumed Session's last Model choice ("" for a new session)
+	provider  string      // the resumed Session's Source ("" = the configured one)
 	on        bool        // saving is on: a SessionFile is being written
 	store     agent.Store // nil when saving is off
 	trace     agent.Trace // nil when saving or the Trace is off
@@ -157,7 +156,7 @@ func openSaving(dir string, resume session.Info, h session.Header, save, withTra
 		if err != nil {
 			return nil, err
 		}
-		s.history, s.maxSeq, s.prior, s.model, s.thinking = l.Messages(), l.MaxSeq(), len(l.Entries), l.Model(), l.Thinking()
+		s.history, s.maxSeq, s.prior, s.model, s.thinking, s.provider = l.Messages(), l.MaxSeq(), len(l.Entries), l.Model(), l.Thinking(), l.Provider()
 	}
 	if !save {
 		return s, nil
@@ -350,6 +349,9 @@ func (x swStore) Repair(ms []chat.Message) error {
 func (x swStore) Model(name string) error {
 	return x.with(func(st *session.Store) error { return st.Model(name) })
 }
+func (x swStore) Provider(name string) error {
+	return x.with(func(st *session.Store) error { return st.Provider(name) })
+}
 func (x swStore) Thinking(on bool) error {
 	return x.with(func(st *session.Store) error { return st.Thinking(on) })
 }
@@ -410,8 +412,3 @@ func startModel(flag, resumed, configured string) string {
 	}
 	return configured
 }
-
-// modelsView adapts the client's model list to ui.ModelsAPI.
-type modelsView struct{ c *openai.Client }
-
-func (v modelsView) List(ctx context.Context) ([]string, error) { return v.c.Models(ctx) }

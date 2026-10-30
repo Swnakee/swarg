@@ -2,6 +2,7 @@ package tools
 
 import (
 	"io"
+	"net/url"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -14,7 +15,8 @@ import (
 
 // skipTags hold no readable text.
 var skipTags = map[string]bool{"script": true, "style": true, "noscript": true, "template": true,
-	"svg": true, "iframe": true, "meta": true, "link": true}
+	"svg": true, "iframe": true, "meta": true, "link": true,
+	"nav": true, "aside": true, "footer": true} // site chrome, not page text (R-71)
 
 // blockTags start and end a line.
 var blockTags = map[string]bool{"title": true, "p": true, "div": true, "section": true, "article": true,
@@ -23,8 +25,9 @@ var blockTags = map[string]bool{"title": true, "p": true, "div": true, "section"
 	"dt": true, "dd": true, "figure": true, "figcaption": true}
 
 // htmlToText returns the readable text of an HTML page: no scripts or styles, headings as
-// "# ", list items as "- ", link text kept, whitespace collapsed. ctype helps to pick the charset.
-func htmlToText(r io.Reader, ctype string) (string, error) {
+// "# ", list items as "- ", whitespace collapsed. ctype helps to pick the charset. With a base URL
+// a link to another page is written as "text (absolute url)" (R-72); without one only its text.
+func htmlToText(r io.Reader, ctype string, base *url.URL) (string, error) {
 	cr, err := charset.NewReader(r, ctype)
 	if err == io.EOF { // an empty page
 		return "", nil
@@ -61,12 +64,36 @@ func htmlToText(r io.Reader, ctype string) (string, error) {
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			walk(c)
 		}
+		if tag == "a" && base != nil {
+			if u := linkURL(base, attr(n, "href")); u != "" {
+				b.WriteString(" (" + u + ")")
+			}
+		}
 		if blockTags[tag] || (len(tag) == 2 && tag[0] == 'h' && tag[1] >= '1' && tag[1] <= '6') {
 			b.WriteString("\n")
 		}
 	}
 	walk(doc)
 	return tidyLines(b.String()), nil
+}
+
+// linkURL is href made absolute against base; "" for non-http links and for links within the
+// same page (fragments).
+func linkURL(base *url.URL, href string) string {
+	ref, err := url.Parse(strings.TrimSpace(href))
+	if err != nil || href == "" {
+		return ""
+	}
+	u := base.ResolveReference(ref)
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return ""
+	}
+	page, self := *u, *base
+	page.Fragment, self.Fragment = "", ""
+	if page == self {
+		return ""
+	}
+	return u.String()
 }
 
 // tidyLines collapses the whitespace of every line and at most one blank line in a row.

@@ -69,7 +69,7 @@ func Create(dir string, h Header) (*Writer, error) {
 			return nil, fmt.Errorf("session: %w", err)
 		}
 		w := &Writer{f: f, path: path, id: h.ID}
-		line, err := encodeLine(record{V: h.V, ID: h.ID, Cwd: h.Cwd, Model: h.Model, Started: h.Started})
+		line, err := encodeLine(record{V: h.V, ID: h.ID, Cwd: h.Cwd, Model: h.Model, Started: h.Started, Provider: h.Provider})
 		if err == nil {
 			_, err = f.Write(line)
 		}
@@ -212,6 +212,17 @@ func (w *Writer) Model(name string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.write(record{Model: name})
+}
+
+// Provider records a Source switch (R-101): the Session runs on name from here on. A blank name
+// is an error and writes nothing.
+func (w *Writer) Provider(name string) error {
+	if name == "" {
+		return errors.New("session: blank provider")
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.write(record{Provider: name})
 }
 
 // Thinking records a thinking mode switch; the last one wins on replay.

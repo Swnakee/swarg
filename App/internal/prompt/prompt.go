@@ -210,8 +210,8 @@ func (s *Set) Build() string {
 	defer s.mu.Unlock()
 	var parts []string
 	for _, b := range s.blocks {
-		if b.Enabled {
-			parts = append(parts, blockText(b)) // block names are internal: never sent to the model
+		if t := blockText(b); b.Enabled && t != "" { // block names are internal: never sent to the model
+			parts = append(parts, t)
 		}
 	}
 	return strings.Join(parts, "\n\n")
@@ -228,6 +228,20 @@ func (s *Set) SetModel(model string) {
 			s.blocks[i].Text = envText(s.env)
 		}
 	}
+}
+
+// SetText replaces the text of the named block (a block whose content changes at run time, e.g.
+// the Skill list); Build shows it from the next call. An unknown name is an error.
+func (s *Set) SetText(name, text string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.blocks {
+		if s.blocks[i].Name == name {
+			s.blocks[i].Text = text
+			return nil
+		}
+	}
+	return fmt.Errorf("prompt: unknown block %q", name)
 }
 
 // SetEnabled switches the named block on or off. An unknown name is an error

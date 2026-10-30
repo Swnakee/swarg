@@ -17,3 +17,5 @@ App/cmd/swarg/swarg
 /App/swarg
 Export/eval/
 Export/live/
+# fake-web host folders of the eval (site/<host>.test), not Go test binaries
+!/App/tests/eval/web/site/*.test/

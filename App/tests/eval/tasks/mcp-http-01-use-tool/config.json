@@ -1,0 +1,1 @@
+{"mcp":{"servers":{"orders":{"url":"http://mcp.test/mcp","headers":{"Authorization":"Bearer ${MCP_TOKEN}"},"trust":true}}}}

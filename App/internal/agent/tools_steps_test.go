@@ -15,6 +15,7 @@ import (
 
 	"swarg/internal/chat"
 	"swarg/internal/llm/llmtest"
+	"swarg/internal/mcp"
 	"swarg/internal/tools"
 )
 
@@ -28,12 +29,24 @@ import (
 type realRunner struct {
 	set  *tools.Set
 	env  tools.Env
-	wait bool // shell_output first waits until its job is done (a channel, not a sleep)
+	wait bool        // shell_output first waits until its job is done (a channel, not a sleep)
+	mcp  *mcp.Client // nil = no MCP; mcp__ names are routed to it like in cmd/swarg
 }
 
-func (r realRunner) Specs() []chat.ToolSpec { return r.set.Specs() }
+func (r realRunner) Specs() []chat.ToolSpec {
+	specs := r.set.Specs()
+	if r.mcp != nil {
+		specs = append(specs, r.mcp.Specs()...)
+	}
+	return specs
+}
 
-func (r realRunner) Kind(name string) (known, readOnly, confirm bool) { return r.set.Kind(name) }
+func (r realRunner) Kind(name string) (known, readOnly, confirm bool) {
+	if r.mcp != nil && mcp.Owns(name) {
+		return r.mcp.Kind(name)
+	}
+	return r.set.Kind(name)
+}
 
 var _ ToolRunner = realRunner{}
 
@@ -44,6 +57,9 @@ func (r realRunner) Label(c chat.ToolCall) string {
 }
 
 func (r realRunner) Run(ctx context.Context, c chat.ToolCall, h ToolHooks) (string, string, error) {
+	if r.mcp != nil && mcp.Owns(c.Name) {
+		return r.mcp.Run(ctx, c.Name, c.Args)
+	}
 	env := r.env
 	if r.wait && c.Name == "shell_output" {
 		var a struct{ ID string }
@@ -85,7 +101,11 @@ func (w *world) toolRunner() (ToolRunner, error) {
 		return nil, err
 	}
 	w.tb.Cleanup(func() { root.Close() })
-	set, err := tools.NewSet(tools.All(), w.disabled)
+	all := tools.All()
+	if w.skl != nil && w.skl.set != nil && w.skl.set.Len() > 0 {
+		all = append(all, w.skl.set.Tool())
+	}
+	set, err := tools.NewSet(all, w.disabled)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +113,11 @@ func (w *world) toolRunner() (ToolRunner, error) {
 	w.jobs = jobs
 	w.tb.Cleanup(jobs.KillAll)
 	env := tools.Env{Root: root, Dir: w.cwd(), OS: runtime.GOOS, ShellTimeout: waitDeadline, Jobs: jobs}
-	return realRunner{set: set, env: env, wait: w.bgWait}, nil
+	rr := realRunner{set: set, env: env, wait: w.bgWait}
+	if w.mc != nil {
+		rr.mcp = w.mc.client
+	}
+	return rr, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -300,6 +324,11 @@ func registerToolsSteps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^a Provider that calls "write_file" for "([^"]*)" with "([^"]*)" and then answers "([^"]*)"$`, func(path, content, final string) error {
 		w.real = true
 		w.calls(final, [2]string{"write_file", jsonArgs("path", path, "content", content)})
+		return nil
+	})
+	sc.Step(`^a Provider that calls "write_file" appending "([^"]*)" to "([^"]*)" and then answers "([^"]*)"$`, func(content, path, final string) error {
+		w.real = true
+		w.calls(final, [2]string{"write_file", fmt.Sprintf(`{"path":%q,"content":%q,"append":true}`, path, content)})
 		return nil
 	})
 

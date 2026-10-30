@@ -9,7 +9,8 @@ API:
 - `TracePath(sessionPath) string` - `<dir>/traces/<file stem>.trace.jsonl`.
 - `Create(dir, Header) (*Writer, error)` - dir 0700, file 0600 `YYYYMMDD-HHMMSS-<id6>.jsonl`, header line written; `Open(path)` continues an existing file (cuts a torn tail, continues seq).
 - `(*Writer).Message(m) (seq, err)` - append; `seq` is `m.Seq` when it is above every seq written so far (the agent numbers its history), else the next free one (monotonic per file, from 1). `Compact` and `Repair` follow the same rule.
-- `NewStore(w) *Store` - `agent.Store` adapter: the same calls with error-only results (`Message`, `Patch`, `Clear`, `Compact`, `Repair`, `Model`, `Thinking`, `Flush`); no state of its own.
+- `NewStore(w) *Store` - `agent.Store` adapter: the same calls with error-only results (`Message`, `Patch`, `Clear`, `Compact`, `Repair`, `Model`, `Provider`, `Thinking`, `Flush`); no state of its own.
+- Provider (T11, R-101): `Header.Provider` (`provider`, omitted when empty) is the Source at the start; `Writer.Provider(name) error` writes a switch line `{"provider":"<name>"}` (blank is an error); `Loaded.Provider()` is the last line, else the header's, else `""` (a file from before T11 = the configured Source). Older readers skip the line like a model line.
 - `Patch = chat.Patch{Seq, Stub, Args}` (alias) - `Patch([]Patch)` - stub batch / arg shrink; `Args` maps tool-call id to shrunk raw JSON.
 - `Clear()`, `Compact(fromSeq, toSeq, summary) (seq, err)`, `Repair(msgs) (seqs, err)`, `Model(name) error` (a Model choice line `{"model":"<id>"}`; blank is an error), `Thinking(on) error` (a line `{"think":true|false}`, R-60; the last wins on replay), `Flush()` (fsync), `Close()`, `Path()`, `ID()`.
 - `Name(name) error` (R-32, T3 ui) - records the Session's Name as one line (`strings.Fields` joined by one space); a blank Name is `ErrBlankName` and writes nothing; the last Name wins; `Clear` does not touch it; the history is never changed by it (I-11).

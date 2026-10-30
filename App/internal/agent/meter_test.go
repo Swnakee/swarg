@@ -241,3 +241,28 @@ func TestMeter_EventBreakdownMatchesEstimate(t *testing.T) {
 		t.Fatalf("meter = %+v", m)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Truncated prompt (R-65)
+// ---------------------------------------------------------------------------
+
+func TestMeter_TruncationWarnsOnce(t *testing.T) {
+	var m meter
+	if w := m.cut(3000, 6000); w != "" {
+		t.Errorf("exactly half read must not warn, got %q", w)
+	}
+	if w := m.cut(500, 1500); w != "" {
+		t.Errorf("a small prompt (under the floor) must not warn, got %q", w)
+	}
+	w := m.cut(1000, 6000)
+	if !strings.HasPrefix(w, "the server read 1k of ~6k prompt tokens") || !strings.Contains(w, "OLLAMA_CONTEXT_LENGTH") {
+		t.Fatalf("warning = %q", w)
+	}
+	if w := m.cut(1000, 6000); w != "" {
+		t.Errorf("second truncation must stay silent, got %q", w)
+	}
+	m.reset()
+	if w := m.cut(1000, 6000); w == "" {
+		t.Error("reset must re-arm the truncation warning")
+	}
+}

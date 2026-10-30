@@ -18,7 +18,8 @@ import (
 func indent(depth int) string { return strings.Repeat("  ", depth) }
 
 // RunPlain runs one non-interactive turn: all of in is one user message and the
-// answer is streamed to out as is. Slash commands are not processed. It returns
+// answer is streamed to out as is. Of the slash commands only /skill <name> [text] is
+// understood (R-83; the eval suite drives swarg this way); the rest is text. It returns
 // the error of a failed turn. Cancelling ctx interrupts the turn (the answer is
 // drained, not cut) and RunPlain returns when the agent is idle.
 func RunPlain(ctx context.Context, d Deps, in io.Reader, out io.Writer) error {
@@ -35,7 +36,19 @@ func RunPlain(ctx context.Context, d Deps, in io.Reader, out io.Writer) error {
 	// The agent must not see ctx cancelled: cutting a request wedges the
 	// single-lane server, so Ctrl+C only asks for Interrupt (drain).
 	d.Agent.Start(context.WithoutCancel(ctx))
-	d.Agent.Submit(text)
+	if c, err := ParseCommand(text); err == nil && c.Kind == KindSkill {
+		ss, ok := d.Agent.(skillSubmitter)
+		if !ok {
+			fmt.Fprintln(out, "no skills loaded")
+			return nil
+		}
+		if err := ss.SubmitSkill(c.Name, c.Text); err != nil {
+			fmt.Fprintln(out, "skill: "+err.Error())
+			return nil
+		}
+	} else {
+		d.Agent.Submit(text)
+	}
 
 	var (
 		turnErr error

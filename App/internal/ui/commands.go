@@ -31,18 +31,24 @@ const (
 	KindHelp
 	KindRename
 	KindModel
+	KindServer // /server [name]: the model source (R-100)
 	KindTask
 	KindThink
+	KindSkill  // /skill <name> [text]
+	KindSkills // /skills [on|off <name>]
+	KindMCP    // /mcp ...
+	KindConfig // /config
 )
 
 // Command is a parsed input line. Text is set for KindText, Name and On for KindBlock, Name
 // for KindRename, Text (the goal) for KindTask, N for KindTool, Name (optional) for KindModel.
 type Command struct {
-	Kind CommandKind
-	Text string
-	Name string
-	On   bool
-	N    int
+	Kind  CommandKind
+	Text  string
+	Name  string
+	On    bool
+	N     int
+	Scope string // "global" or "project" for /skills and /mcp switches; "" = the default scope
 }
 
 // cmdSpec describes one slash command: how it is typed, what /help and the suggestions say
@@ -71,7 +77,12 @@ var commands = []cmdSpec{
 	{name: "/blocks", desc: "list the system prompt blocks", kind: KindBlocks},
 	{name: "/block", args: "on|off <name>", desc: "switch a prompt block", kind: KindBlock, parse: parseBlock},
 	{name: "/model", args: "[id|N]", desc: "choose the model (list from the server)", kind: KindModel, parse: parseModel},
+	{name: "/server", args: "[name]", desc: "choose the model source (server); the list shows their state", kind: KindServer, parse: parseServer},
 	{name: "/think", args: "[on|off]", desc: "thinking mode of the model (no argument shows it)", kind: KindThink, parse: parseThink},
+	{name: "/skill", args: "<name> [text]", desc: "apply a skill, then answer the text", kind: KindSkill, parse: parseSkill},
+	{name: "/skills", args: "[on|off <name> [global|project]]", desc: "skills menu, or switch one", kind: KindSkills, parse: parseSkills},
+	{name: "/mcp", args: "[<server> | on|off|restart|approve <server> [global|project]]", desc: "MCP servers menu: state, tools, switch, restart, approve", kind: KindMCP, parse: parseMCP},
+	{name: "/config", desc: "settings menu (saved to the chosen scope)", kind: KindConfig},
 	{name: "/exit", desc: "quit swarg", kind: KindExit},
 }
 
@@ -80,6 +91,9 @@ var (
 	errRenameUsage = errors.New("usage: /rename <name>")
 	errTaskUsage   = errors.New("usage: /task <goal>")
 	errToolUsage   = errors.New("usage: /tool N (N is the number after # on a tool line)")
+	errSkillUsage  = errors.New("usage: /skill <name> [text]")
+	errSkillsUsage = errors.New("usage: /skills | /skills on|off <name> [global|project]")
+	errMCPUsage    = errors.New("usage: /mcp | /mcp <server> | /mcp on|off|restart|approve <server> [global|project]")
 )
 
 // ParseCommand parses one input line. Commands are case-sensitive and the line is
@@ -161,6 +175,18 @@ func parseModel(f []string) (Command, error) {
 	return c, nil
 }
 
+// parseServer is /server [name]: no argument opens the list, one argument switches.
+func parseServer(f []string) (Command, error) {
+	if len(f) > 2 {
+		return Command{}, errors.New("usage: /server or /server <name>")
+	}
+	c := Command{Kind: KindServer}
+	if len(f) == 2 {
+		c.Name = f[1]
+	}
+	return c, nil
+}
+
 // parseThink is /think [on|off]: no argument shows the state, one argument sets it (Name).
 func parseThink(f []string) (Command, error) {
 	if len(f) > 2 || (len(f) == 2 && f[1] != "on" && f[1] != "off") {
@@ -186,4 +212,53 @@ func parseBlock(f []string) (Command, error) {
 		return Command{}, errBlockUsage
 	}
 	return Command{Kind: KindBlock, Name: f[2], On: f[1] == "on"}, nil
+}
+
+// parseSkill is /skill <name> [text]: Name is the Skill, Text what the model answers afterwards.
+func parseSkill(f []string) (Command, error) {
+	if len(f) < 2 {
+		return Command{}, errSkillUsage
+	}
+	return Command{Kind: KindSkill, Name: f[1], Text: strings.Join(f[2:], " ")}, nil
+}
+
+// parseSkills is /skills (the menu) or /skills on|off <name> [global|project].
+func parseSkills(f []string) (Command, error) {
+	scope, ok := parseScope(f, 3)
+	switch {
+	case len(f) == 1:
+		return Command{Kind: KindSkills}, nil
+	case ok && (f[1] == "on" || f[1] == "off"):
+		return Command{Kind: KindSkills, Name: f[2], On: f[1] == "on", Scope: scope}, nil
+	}
+	return Command{}, errSkillsUsage
+}
+
+// parseMCP is /mcp (the menu), /mcp <server> (its tools) or /mcp on|off|restart|approve <server>
+// [global|project]; the action travels in Text.
+func parseMCP(f []string) (Command, error) {
+	scope, ok := parseScope(f, 3)
+	switch {
+	case len(f) == 1:
+		return Command{Kind: KindMCP}, nil
+	case len(f) == 2 && !mcpAction(f[1]):
+		return Command{Kind: KindMCP, Name: f[1], Text: "show"}, nil
+	case ok && mcpAction(f[1]):
+		return Command{Kind: KindMCP, Name: f[2], Text: f[1], On: f[1] == "on", Scope: scope}, nil
+	}
+	return Command{}, errMCPUsage
+}
+
+func mcpAction(s string) bool { return s == "on" || s == "off" || s == "restart" || s == "approve" }
+
+// parseScope reads an optional trailing "global" | "project" after n fields: ok when the line has
+// exactly n fields, or n+1 with a valid scope.
+func parseScope(f []string, n int) (scope string, ok bool) {
+	switch {
+	case len(f) == n:
+		return "", true
+	case len(f) == n+1 && (f[n] == "global" || f[n] == "project"):
+		return f[n], true
+	}
+	return "", false
 }

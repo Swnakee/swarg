@@ -72,6 +72,9 @@ func (t EditFile) Run(_ context.Context, env Env, args json.RawMessage) (Result,
 		return Result{}, err
 	}
 	if !exists {
+		if err := nestedHint(env, name); err != nil {
+			return Result{}, err
+		}
 		return Result{}, fmt.Errorf("%s: no such file", a.Path)
 	}
 	data, err := env.Root.ReadFile(name)

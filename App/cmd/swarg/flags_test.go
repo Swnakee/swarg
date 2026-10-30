@@ -8,6 +8,7 @@ import (
 
 	"swarg/internal/agent"
 	"swarg/internal/chat"
+	"swarg/internal/config"
 	"swarg/internal/prompt"
 	"swarg/internal/session"
 	"swarg/internal/ui"
@@ -270,7 +271,9 @@ func TestOnModel_RewritesThePromptThenForwards(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got []agent.Event
-	f := onModel(set, func(ev agent.Event) {
+	cfg := config.Defaults()
+	srcs, _ := testSources(t, &cfg)
+	f := onModel(set, srcs, func(ev agent.Event) {
 		if ev.Kind == agent.EvModel && !strings.Contains(set.Build(), "Model: new") {
 			t.Error("the event was forwarded before the prompt changed")
 		}
@@ -280,5 +283,8 @@ func TestOnModel_RewritesThePromptThenForwards(t *testing.T) {
 	f(agent.Event{Kind: agent.EvModel, Text: "new"})
 	if len(got) != 2 || !strings.Contains(set.Build(), "Model: new") {
 		t.Errorf("events %+v, prompt:\n%s", got, set.Build())
+	}
+	if r := srcs.recent.Models("local"); len(r) != 1 || r[0] != "new" { // R-101: the last used model of the Source
+		t.Errorf("recent %v, want [new]", r)
 	}
 }

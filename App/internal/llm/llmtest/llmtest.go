@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"unicode/utf8"
@@ -31,7 +32,9 @@ type Reply struct {
 	SplitArgs  bool            // send each call's arguments in 3 chunks (OpenRouter style)
 	Finish     string          // finish_reason: "stop" or "length"; default "tool_calls" if ToolCalls, else "stop"
 	Usage      *chat.Usage     // final usage chunk, only if non-nil
-	Status     int             // non-zero and not 200: error response with body "fake error"
+	Status     int             // non-zero and not 200: error response with body "fake error" (or Body)
+	Body       string          // the error body sent with Status; "" = "fake error"
+	RetryAfter int             // Retry-After header (seconds) sent with Status, 0 = none
 	NoDone     bool            // end without finish chunk and [DONE] (truncated stream)
 	Malformed  bool            // one invalid JSON data line after the chunks
 }
@@ -40,9 +43,19 @@ type Reply struct {
 // Server
 // ---------------------------------------------------------------------------
 
+// Model is one entry of the fake's model list (GET /v1/models), OpenRouter-shaped when Name,
+// Context, prices or Parameters are set; a plain id otherwise.
+type Model struct {
+	ID, Name           string
+	Context            int
+	Prompt, Completion string   // USD per token as OpenRouter writes them, e.g. "0.0000001"; "" = omitted
+	Parameters         []string // supported_parameters; nil = omitted
+}
+
 // Server is a running fake server.
 type Server struct {
-	URL string // base URL ending in /v1
+	URL    string  // base URL ending in /v1
+	Models []Model // answered at GET /v1/models; set before the first call
 
 	mu          sync.Mutex
 	replies     []Reply
@@ -59,6 +72,7 @@ func New(t testing.TB, replies ...Reply) *Server {
 	s := &Server{replies: replies, gone: make(chan struct{}, 64)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", s.serve)
+	mux.HandleFunc("GET /v1/models", s.serveModels)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	s.URL = srv.URL + "/v1"
@@ -112,8 +126,15 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	case !ok:
 		http.Error(w, "no reply scripted", http.StatusInternalServerError)
 	case rep.Status != 0 && rep.Status != http.StatusOK:
+		if rep.RetryAfter > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(rep.RetryAfter))
+		}
 		w.WriteHeader(rep.Status)
-		_, err := io.WriteString(w, "fake error")
+		body := rep.Body
+		if body == "" {
+			body = "fake error"
+		}
+		_, err := io.WriteString(w, body)
 		written = err == nil
 	default:
 		written = streamReply(r.Context(), w, rep)
@@ -128,6 +149,32 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	case s.gone <- struct{}{}:
 	default:
 	}
+}
+
+// serveModels answers the model list in the OpenRouter shape (plain entries carry only "id").
+func (s *Server) serveModels(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	models := s.Models
+	s.mu.Unlock()
+	data := []map[string]any{}
+	for _, m := range models {
+		e := map[string]any{"id": m.ID}
+		if m.Name != "" {
+			e["name"] = m.Name
+		}
+		if m.Context > 0 {
+			e["context_length"] = m.Context
+		}
+		if m.Prompt != "" || m.Completion != "" {
+			e["pricing"] = map[string]string{"prompt": m.Prompt, "completion": m.Completion}
+		}
+		if m.Parameters != nil {
+			e["supported_parameters"] = m.Parameters
+		}
+		data = append(data, e)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
 }
 
 // ---------------------------------------------------------------------------

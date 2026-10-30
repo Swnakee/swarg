@@ -297,7 +297,7 @@ func TestReadable_SessionPickerInEveryProfile(t *testing.T) {
 	}
 	for _, p := range profiles {
 		t.Run(p.String(), func(t *testing.T) {
-			pk := newPicker(rows)
+			pk := newPicker(rows, "", nil)
 			pk.Update(tea.ColorProfileMsg{Profile: p})
 			view := downsample(pk.View().Content, p)
 			if bad := unreadable(view, p); len(bad) > 0 {

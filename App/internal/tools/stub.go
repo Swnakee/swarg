@@ -104,7 +104,7 @@ func (Grep) Stub(args json.RawMessage, res Result) string {
 	if strings.Contains(res.Output, "[... more matches]") {
 		plus = "+"
 	}
-	return fmt.Sprintf("[grep %q: %d%s matches shown earlier]", clipRunes(a.Pattern, stubNameRunes), n, plus)
+	return fmt.Sprintf("[grep %q: %d%s matches shown earlier]", ClipRunes(a.Pattern, stubNameRunes), n, plus)
 }
 
 // Stub of list_dir: the folder and the number of entries that were shown.
@@ -129,7 +129,7 @@ func (Shell) Stub(args json.RawMessage, res Result) string {
 	if status == "exit 0" {
 		n = stubOKLines
 	}
-	return stubWithTail(fmt.Sprintf("[shell %s: %s]", clipRunes(cmd, stubNameRunes), status), body, n)
+	return stubWithTail(fmt.Sprintf("[shell %s: %s]", ClipRunes(cmd, stubNameRunes), status), body, n)
 }
 
 // Stub of shell_output: the job id, the status and the last lines.
@@ -215,8 +215,8 @@ func countLines(out string) int {
 	return n
 }
 
-// clipRunes cuts s to n runes, marking the cut with "...".
-func clipRunes(s string, n int) string {
+// ClipRunes cuts s to n runes, marking the cut with "..." (shared with the skills package).
+func ClipRunes(s string, n int) string {
 	if r := []rune(s); len(r) > n {
 		return string(r[:n]) + "..."
 	}

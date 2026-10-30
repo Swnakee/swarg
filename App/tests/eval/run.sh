@@ -113,6 +113,8 @@ for t in "${TASKS[@]}"; do
     LOG="$RUN/runs/$t.log"
     waited=0
     while :; do
+        case "$t" in web-*|combo-*) export SWARG_WEB_DIR="$HERE/web" ;; *) unset SWARG_WEB_DIR ;; esac
+        case "$t" in mcp-http-*) export SWARG_MCP_DIR="$HERE/mcp" ;; *) unset SWARG_MCP_DIR ;; esac
         bash "$SANDBOX/run.sh" "_eval-$t" -- sh /work/.eval/driver.sh > "$LOG" 2>&1
         rc=$?
         [ "$rc" = 5 ] || break

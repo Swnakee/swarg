@@ -12,10 +12,10 @@ import (
 // Model choice in the app (/model, the panel's model item; R-30)
 // ---------------------------------------------------------------------------
 
-// modelsMsg carries the Provider's model list (or the error) back into Update.
+// modelsMsg carries the Source's model list (or the error) back into Update.
 type modelsMsg struct {
-	ids []string
-	err error
+	rows []ModelRow
+	err  error
 }
 
 // chooseModel is /model: with an id (or a number of the last list) it sets the model at once;
@@ -23,11 +23,11 @@ type modelsMsg struct {
 func (m *model) chooseModel(arg string) tea.Cmd {
 	if arg != "" {
 		if n, err := strconv.Atoi(arg); err == nil { // a number picks from the last list, never an id
-			if n < 1 || n > len(m.modelList) {
+			if n < 1 || n > len(m.modelRows) {
 				m.say(fmt.Sprintf("no model %d in the list; /model shows it", n))
 				return nil
 			}
-			arg = m.modelList[n-1]
+			arg = m.modelRows[n-1].ID
 		}
 		m.setModel(arg)
 		return nil
@@ -38,33 +38,22 @@ func (m *model) chooseModel(arg string) tea.Cmd {
 	}
 	list, ctx := m.d.Models, m.ctx
 	return func() tea.Msg {
-		ids, err := list.List(ctx)
-		return modelsMsg{ids: ids, err: err}
+		rows, err := list.List(ctx)
+		return modelsMsg{rows: rows, err: err}
 	}
 }
 
-// onModels shows the fetched list: each id numbered, the one in use marked.
+// onModels opens the model menu over the fetched list (the id in use marked).
 func (m *model) onModels(msg modelsMsg) {
 	switch {
 	case msg.err != nil:
 		m.say("model list: " + msg.err.Error())
 		return
-	case len(msg.ids) == 0:
+	case len(msg.rows) == 0:
 		m.say("the server lists no models; use /model <id>")
 		return
 	}
-	m.modelList = msg.ids
-	var b strings.Builder
-	b.WriteString("models (" + glyphAuto + " = in use):")
-	for i, id := range msg.ids {
-		mark := " "
-		if id == m.modelName {
-			mark = glyphAuto
-		}
-		fmt.Fprintf(&b, "\n  %2d %s %s", i+1, mark, id)
-	}
-	b.WriteString("\nchoose with /model N or /model <id>")
-	m.say(b.String())
+	m.openMenu(m.modelMenu(msg.rows, nil), nil)
 }
 
 // setModel asks the agent to use the model from the next request on.
@@ -89,7 +78,7 @@ const thinkText = "think"
 // thinking mode from the next request on (R-60).
 func (m *model) think(arg string) {
 	if arg == "" {
-		m.say("thinking: " + onOff(m.thinking))
+		m.openMenu(m.thinkMenu(), nil)
 		return
 	}
 	t, ok := m.d.Agent.(thinker)

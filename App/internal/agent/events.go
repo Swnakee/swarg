@@ -29,6 +29,7 @@ const (
 	EvCompacted      // a Compaction ended (always follows EvCompactStarted): Spans replaced, Before and After estimated tokens
 
 	EvModel    // the Model choice changed (SetModel, Load WithModel): Text = the model id
+	EvProvider // the Source changed (SetSource): Text = the provider name (R-100)
 	EvThinking // the thinking mode changed (SetThinking, Load WithThinking): Text = "on" or "off"
 	EvSpeed    // a Step's stream ended with a measured Generation speed: Speed
 

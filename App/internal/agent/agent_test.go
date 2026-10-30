@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -329,11 +330,11 @@ func TestAgent_UnparsedToolCallTwiceEndsTheTurn(t *testing.T) {
 // long or never ends, then cannot parse it): finish "length", no text, no call. Like F10: a
 // warning, one nudge (keep the arguments short), then the model's next answer.
 func TestAgent_UndeliveredOutputAsksTheModelAgain(t *testing.T) {
-	r := startRig(t)
+	r := startRig(t, func(d *Deps) { d.MaxTokens = 2048 })
 	r.a.Submit("hi")
 	r.p.next(t).end(chat.FinishLength, nil)
 	c := r.p.next(t)
-	if last := c.req.Messages[len(c.req.Messages)-1]; last.Role != chat.RoleUser || !strings.Contains(last.Content, undeliveredNudge) {
+	if last := c.req.Messages[len(c.req.Messages)-1]; last.Role != chat.RoleUser || !strings.Contains(last.Content, fmt.Sprintf(undeliveredNudge, 2048)) {
 		t.Fatalf("last request message = %+v", last)
 	}
 	c.reply("done")

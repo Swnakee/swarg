@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -198,5 +199,15 @@ func TestEditFile_MissingPathShowsCallShape(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), `"path"`) || !strings.Contains(err.Error(), `edit_file`) {
 			t.Errorf("%s: error %v does not name path and show the call", a, err)
 		}
+	}
+}
+
+// R-66: the same slip as in write_file ("work/x" from the folder "work") gets the hint, not "not found".
+func TestEditFile_PathRepeatingTheProjectFolderGetsTheHint(t *testing.T) {
+	env := newTestEnv(t, nil)
+	base := filepath.Base(env.Dir)
+	_, err := EditFile{}.Run(context.Background(), env, json.RawMessage(`{"path":"`+base+`/a.txt","old":"x","new":"y"}`))
+	if err == nil || !strings.Contains(err.Error(), `use "a.txt"`) {
+		t.Fatalf("err = %v", err)
 	}
 }

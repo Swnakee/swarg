@@ -133,14 +133,19 @@ func (a *Agent) SubmitTask(goal string) error {
 	return nil
 }
 
-// runGoal is the prelude of a /task Turn: an assistant Message with one synthetic `task` call is
-// appended (no model request) and the call runs like a model's, so the TaskResult lands in the
-// history and the events flow as usual; the repeated-goal check does not apply to it.
+// runGoal is the prelude of a /task Turn: a synthetic `task` call with the goal; the
+// repeated-goal check does not apply to it.
 func (a *Agent) runGoal(c *conversation, goal string, repeats *repeatGuard) {
 	args, _ := json.Marshal(taskArgs{Goal: goal})
+	a.runPrelude(c, taskTool, string(args), repeats)
+}
+
+// runPrelude appends an assistant Message with one synthetic call (no model request) and runs
+// the call like a model's, so its result lands in the history and the events flow as usual.
+func (a *Agent) runPrelude(c *conversation, name, args string, repeats *repeatGuard) {
 	a.mu.Lock()
 	a.callSeq++
-	call := chat.ToolCall{ID: fmt.Sprintf("call_%d", a.callSeq), Name: taskTool, Args: string(args)}
+	call := chat.ToolCall{ID: fmt.Sprintf("call_%d", a.callSeq), Name: name, Args: args}
 	a.appendLocked(c, chat.Message{Role: chat.RoleAssistant, ToolCalls: []chat.ToolCall{call}})
 	a.mu.Unlock()
 	a.sync()
@@ -282,4 +287,45 @@ func (a *Agent) changedFiles(c *conversation) (out []string) {
 		}
 	}
 	return out
+}
+
+// ---------------------------------------------------------------------------
+// /skill (R-83)
+// ---------------------------------------------------------------------------
+
+const skillTool = "skill"
+
+// SkillOnlyText is the user text of a /skill Turn given without text (the UI shows the same).
+const SkillOnlyText = "Apply this skill."
+
+// ErrNoSkills is returned by SubmitSkill when the ToolRunner has no `skill` Tool (no Skills loaded).
+var ErrNoSkills = errors.New("agent: no skills")
+
+// SubmitSkill queues a /skill Turn: the Skill is applied by a synthetic `skill` call, then the
+// model answers text (or skillOnlyText). Like a /task goal it never joins a running Turn.
+func (a *Agent) SubmitSkill(name, text string) error {
+	if a.deps.Tools == nil {
+		return ErrNoSkills
+	}
+	if known, _, _ := a.deps.Tools.Kind(skillTool); !known {
+		return ErrNoSkills
+	}
+	if strings.TrimSpace(text) == "" {
+		text = SkillOnlyText
+	}
+	a.mu.Lock()
+	a.queue = append(a.queue, qitem{text: text, skill: strings.TrimSpace(name)})
+	n := a.queuedTextsLocked()
+	a.mu.Unlock()
+	a.emit(Event{Kind: EvQueue, Queued: n})
+	signal(a.wake)
+	return nil
+}
+
+// runSkill is the prelude of a /skill Turn: a synthetic `skill` call for name.
+func (a *Agent) runSkill(c *conversation, name string, repeats *repeatGuard) {
+	args, _ := json.Marshal(struct {
+		Name string `json:"name"`
+	}{name})
+	a.runPrelude(c, skillTool, string(args), repeats)
 }

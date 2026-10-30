@@ -29,7 +29,7 @@ func ptype(s string) tea.KeyPressMsg {
 
 // drive sends the messages and, like Bubble Tea, draws after each one (clicks hit the spots
 // of the last draw).
-func drive(p *picker, msgs ...tea.Msg) (quit bool) {
+func drive(p *menu, msgs ...tea.Msg) (quit bool) {
 	for _, m := range msgs {
 		_, cmd := p.Update(m)
 		if cmd != nil {
@@ -43,34 +43,34 @@ func drive(p *picker, msgs ...tea.Msg) (quit bool) {
 }
 
 func TestPicker_EnterChoosesFirstReadable(t *testing.T) {
-	p := newPicker(pickRows())
+	p := newPicker(pickRows(), "", nil)
 	if !drive(p, pkey(tea.KeyEnter)) || p.chosen != "c3" {
 		t.Fatalf("chosen = %q", p.chosen)
 	}
 }
 
 func TestPicker_NavigationSkipsUnreadable(t *testing.T) {
-	p := newPicker(pickRows())
+	p := newPicker(pickRows(), "", nil)
 	drive(p, pkey(tea.KeyDown), pkey(tea.KeyEnter))
 	if p.chosen != "a1" {
 		t.Errorf("down over the unreadable row: chosen %q, want a1", p.chosen)
 	}
-	p = newPicker(pickRows())
+	p = newPicker(pickRows(), "", nil)
 	drive(p, ptype("j"), ptype("j"), ptype("k"), pkey(tea.KeyEnter))
 	if p.chosen != "c3" {
 		t.Errorf("j j k: chosen %q, want c3", p.chosen)
 	}
-	p = newPicker(pickRows())
+	p = newPicker(pickRows(), "", nil)
 	drive(p, pkey(tea.KeyEnd), pkey(tea.KeyEnter))
 	if p.chosen != "a1" {
 		t.Errorf("End: chosen %q, want a1", p.chosen)
 	}
-	p = newPicker(pickRows())
+	p = newPicker(pickRows(), "", nil)
 	drive(p, pkey(tea.KeyEnd), pkey(tea.KeyHome), pkey(tea.KeyEnter))
 	if p.chosen != "c3" {
 		t.Errorf("Home: chosen %q, want c3", p.chosen)
 	}
-	p = newPicker(pickRows())
+	p = newPicker(pickRows(), "", nil)
 	drive(p, pkey(tea.KeyPgDown), pkey(tea.KeyEnter))
 	if p.chosen != "a1" {
 		t.Errorf("PgDn: chosen %q, want a1", p.chosen)
@@ -83,7 +83,7 @@ func TestPicker_NavigationSkipsUnreadable(t *testing.T) {
 
 func TestPicker_CancelKeys(t *testing.T) {
 	for name, k := range map[string]tea.KeyPressMsg{"esc": pkey(tea.KeyEscape), "q": ptype("q"), "ctrl+c": {Code: 'c', Mod: tea.ModCtrl}} {
-		p := newPicker(pickRows())
+		p := newPicker(pickRows(), "", nil)
 		if !drive(p, k) || p.chosen != "" {
 			t.Errorf("%s: quit or chosen %q wrong", name, p.chosen)
 		}
@@ -91,7 +91,7 @@ func TestPicker_CancelKeys(t *testing.T) {
 }
 
 func TestPicker_FilterByTitle(t *testing.T) {
-	p := newPicker(pickRows())
+	p := newPicker(pickRows(), "", nil)
 	drive(p, ptype("d"), ptype("o"), ptype("c"))
 	if p.filter != "doc" || len(p.vis) != 1 {
 		t.Fatalf("filter %q, %d rows", p.filter, len(p.vis))
@@ -105,7 +105,7 @@ func TestPicker_FilterByTitle(t *testing.T) {
 	}
 
 	// j, k and q type into the filter once filtering has started
-	p = newPicker(pickRows())
+	p = newPicker(pickRows(), "", nil)
 	drive(p, ptype("/"), ptype("q"))
 	if p.filter != "q" || len(p.vis) != 0 {
 		t.Errorf("after / q: filter %q, %d rows", p.filter, len(p.vis))
@@ -125,7 +125,7 @@ func TestPicker_FilterByTitle(t *testing.T) {
 }
 
 func TestPicker_OnlyUnreadableCannotChoose(t *testing.T) {
-	p := newPicker([]PickRow{{ID: "b2", Err: "bad"}})
+	p := newPicker([]PickRow{{ID: "b2", Err: "bad"}}, "", nil)
 	if drive(p, pkey(tea.KeyEnter)) || p.chosen != "" {
 		t.Error("an unreadable row was chosen")
 	}
@@ -135,7 +135,7 @@ func TestPicker_OnlyUnreadableCannotChoose(t *testing.T) {
 }
 
 func TestPicker_MouseClickAndWheel(t *testing.T) {
-	p := newPicker(pickRows())
+	p := newPicker(pickRows(), "", nil)
 	drive(p, tea.MouseClickMsg{X: 3, Y: 2, Button: tea.MouseLeft}) // the unreadable row
 	if p.chosen != "" {
 		t.Error("click on an unreadable row chose it")
@@ -155,7 +155,7 @@ func TestPicker_WheelScrollsAndLongListFollowsCursor(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		rows = append(rows, PickRow{ID: fmt.Sprintf("id%02d", i), Title: fmt.Sprintf("t%02d", i), Model: "m", Time: time.Unix(int64(1000-i), 0)})
 	}
-	p := newPicker(rows)
+	p := newPicker(rows, "", nil)
 	drive(p, tea.WindowSizeMsg{Width: 60, Height: 12})
 	drive(p, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	if p.top != 3 || p.cur != 0 {
@@ -182,7 +182,7 @@ func TestPicker_WheelScrollsAndLongListFollowsCursor(t *testing.T) {
 }
 
 func TestPicker_RowFormat(t *testing.T) {
-	v := newPicker(pickRows()).View().Content
+	v := newPicker(pickRows(), "", nil).View().Content
 	for _, want := range []string{"2 msgs", "4 msgs", "fix the parser", "write docs", "Esc cancel"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("view lacks %q:\n%s", want, v)
@@ -206,12 +206,21 @@ func TestPickSession_EmptyListNeverStartsProgram(t *testing.T) {
 func ctrlD() tea.KeyPressMsg { return tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl} }
 
 // delPicker is a picker over pickRows whose deleter records the ids it was asked to delete.
-func delPicker(t *testing.T, err error) (*picker, *[]string) {
+func delPicker(t *testing.T, err error) (*menu, *[]string) {
 	t.Helper()
 	var got []string
-	p := newPicker(pickRows())
-	p.del = func(id string) error { got = append(got, id); return err }
+	p := newPicker(pickRows(), "", func(id string) error { got = append(got, id); return err })
 	return p, &got
+}
+
+// has reports whether the menu still lists the row id.
+func has(p *menu, id string) bool {
+	for _, r := range p.items {
+		if r.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func TestPicker_DeleteConfirmedRemovesTheRow(t *testing.T) {
@@ -224,10 +233,8 @@ func TestPicker_DeleteConfirmedRemovesTheRow(t *testing.T) {
 	if len(*got) != 1 || (*got)[0] != "c3" {
 		t.Fatalf("deleted ids = %v, want [c3]", *got)
 	}
-	for _, r := range p.rows {
-		if r.ID == "c3" {
-			t.Error("the deleted row is still in the picker")
-		}
+	if has(p, "c3") {
+		t.Error("the deleted row is still in the picker")
 	}
 	if p.confirm {
 		t.Error("still confirming after delete")
@@ -248,13 +255,7 @@ func TestPicker_DeleteCancelledKeepsTheRow(t *testing.T) {
 	if p.confirm {
 		t.Error("still confirming after cancel")
 	}
-	found := false
-	for _, r := range p.rows {
-		if r.ID == "c3" {
-			found = true
-		}
-	}
-	if !found {
+	if !has(p, "c3") {
 		t.Error("the row was removed although the delete was cancelled")
 	}
 }
@@ -265,19 +266,13 @@ func TestPicker_DeleteErrorKeepsTheRowAndShows(t *testing.T) {
 	if !strings.Contains(p.note, "permission denied") {
 		t.Errorf("note = %q, want the error", p.note)
 	}
-	found := false
-	for _, r := range p.rows {
-		if r.ID == "c3" {
-			found = true
-		}
-	}
-	if !found {
+	if !has(p, "c3") {
 		t.Error("a failed delete removed the row")
 	}
 }
 
 func TestPicker_DeleteDisabledWithoutADeleter(t *testing.T) {
-	p := newPicker(pickRows()) // p.del is nil
+	p := newPicker(pickRows(), "", nil) // no deleter
 	drive(p, ctrlD())
 	if p.confirm {
 		t.Error("Ctrl+D asked to confirm with no deleter wired")

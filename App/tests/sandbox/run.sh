@@ -28,12 +28,21 @@ ROOT="$(cd "$APP/.." && pwd)"
 
 MODEL_HOST_URL="${SWARG_MODEL_HOST_URL:-http://127.0.0.1:8080}"
 MODEL_PORT="${MODEL_HOST_URL##*:}"
+# The proxy reaches a model on this Mac as host.lima.internal, any other host as is
+# (e.g. an Ollama server on another machine in the LAN: SWARG_MODEL_HOST_URL=http://<ip>:11434).
+MODEL_HOST="${MODEL_HOST_URL#*://}"; MODEL_HOST="${MODEL_HOST%:*}"
+case "$MODEL_HOST" in 127.0.0.1|localhost) MODEL_HOST="host.lima.internal" ;; esac
 RUN_TIMEOUT="${SWARG_RUN_TIMEOUT:-1800}"    # seconds; generous on purpose
 CPUS="${SWARG_CPUS:-1}"
 MEMORY="${SWARG_MEMORY:-1g}"
 
 NET="swarg-e2e-net"
 PROXY="swarg-e2e-proxy"
+WEB="swarg-e2e-web"
+WEB_DIR="${SWARG_WEB_DIR:-}"   # fake web for web-* evals: a dir with server.py and site/<host>/
+MCP="swarg-e2e-mcp"
+MCP_DIR="${SWARG_MCP_DIR:-}"   # fake HTTP MCP server for mcp-http-* evals: a dir with mcp_http.py and mcp_demo.py
+MCP_TOKEN="t9-eval-token"      # the bearer the fake needs; the agent gets it as MCP_TOKEN (never in a config file)
 IMAGE="swarg-e2e:latest"
 LOCK="${TMPDIR:-/tmp}/swarg-e2e.lock"
 
@@ -63,6 +72,8 @@ BUILD=""
 cleanup() {
     if [ -n "$CID" ]; then docker rm -f -v "$CID" >/dev/null 2>&1; fi
     docker rm -f "$PROXY" >/dev/null 2>&1
+    [ -n "$WEB_DIR" ] && docker rm -f -v "$WEB" >/dev/null 2>&1
+    [ -n "$MCP_DIR" ] && docker rm -f -v "$MCP" >/dev/null 2>&1
     docker network rm "$NET" >/dev/null 2>&1
     [ -n "$BUILD" ] && rm -rf "$BUILD"
     rmdir "$LOCK" 2>/dev/null
@@ -124,8 +135,34 @@ docker rm -f "$PROXY" >/dev/null 2>&1
 docker network rm "$NET" >/dev/null 2>&1
 docker network create --internal "$NET" >/dev/null || exit 1
 docker run -d --name "$PROXY" --network bridge --memory 64m --cpus 0.25 \
-    alpine/socat "TCP-LISTEN:8080,fork,reuseaddr" "TCP:host.lima.internal:$MODEL_PORT" >/dev/null || exit 1
+    alpine/socat "TCP-LISTEN:8080,fork,reuseaddr" "TCP:$MODEL_HOST:$MODEL_PORT" >/dev/null || exit 1
 docker network connect --alias model "$NET" "$PROXY" || exit 1
+
+# Fake web (SWARG_WEB_DIR): one more container on the internal network, answering for
+# search.test and every host folder under site/; no internet involved.
+if [ -n "$WEB_DIR" ]; then
+    [ -f "$WEB_DIR/server.py" ] && [ -d "$WEB_DIR/site" ] || { say "SWARG_WEB_DIR has no server.py and site/: $WEB_DIR"; exit 2; }
+    ALIASES=(--network-alias search.test)
+    for h in "$WEB_DIR"/site/*/; do ALIASES+=(--network-alias "$(basename "$h")"); done
+    docker rm -f -v "$WEB" >/dev/null 2>&1
+    docker create --name "$WEB" --network "$NET" "${ALIASES[@]}" --cpus 0.25 --memory 64m --pids-limit 64 \
+        --read-only --cap-drop ALL --security-opt no-new-privileges -v /srv \
+        "$IMAGE" python3 /srv/server.py /srv/site 80 >/dev/null || exit 1
+    docker cp "$WEB_DIR/server.py" "$WEB:/srv/" >/dev/null && docker cp "$WEB_DIR/site" "$WEB:/srv/" >/dev/null || exit 1
+    docker start "$WEB" >/dev/null || exit 1
+fi
+
+# Fake HTTP MCP server (SWARG_MCP_DIR): one more container on the internal network, reached as
+# http://mcp.test/mcp (a bearer token is required: the agent gets it through MCP_TOKEN).
+if [ -n "$MCP_DIR" ]; then
+    [ -f "$MCP_DIR/mcp_http.py" ] && [ -f "$MCP_DIR/mcp_demo.py" ] || { say "SWARG_MCP_DIR has no mcp_http.py and mcp_demo.py: $MCP_DIR"; exit 2; }
+    docker rm -f -v "$MCP" >/dev/null 2>&1
+    docker create --name "$MCP" --network "$NET" --network-alias mcp.test --cpus 0.25 --memory 64m --pids-limit 64 \
+        --read-only --cap-drop ALL --security-opt no-new-privileges -v /srv \
+        "$IMAGE" python3 /srv/mcp_http.py 80 --token "$MCP_TOKEN" >/dev/null || exit 1
+    docker cp "$MCP_DIR/mcp_http.py" "$MCP:/srv/" >/dev/null && docker cp "$MCP_DIR/mcp_demo.py" "$MCP:/srv/" >/dev/null || exit 1
+    docker start "$MCP" >/dev/null || exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Run
@@ -135,6 +172,7 @@ docker network connect --alias model "$NET" "$PROXY" || exit 1
 # with tools.auto_approve into the writable $HOME (a tmpfs, so Sessions can be saved).
 # SWARG_ASK=1 keeps the confirmations (e.g. the denial e2e run).
 CFG_ENV=(-e SWARG_ASK="${SWARG_ASK:-0}")
+[ -n "$MCP_DIR" ] && CFG_ENV+=(-e MCP_TOKEN="$MCP_TOKEN")
 
 # A live session gets the host terminal's colour support: without TERM/COLORTERM swarg
 # falls back to 16 colours. The image has no terminfo for xterm-ghostty, so TERM is the

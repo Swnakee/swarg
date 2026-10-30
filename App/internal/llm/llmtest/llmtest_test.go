@@ -363,3 +363,46 @@ func TestServer_GoneSignalsDisconnect(t *testing.T) {
 		t.Errorf("Completed after disconnect = %d, want 0", n)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Fake OpenRouter (T11): the model list and Retry-After
+// ---------------------------------------------------------------------------
+
+func TestServer_ModelsEndpoint(t *testing.T) {
+	s := llmtest.New(t)
+	s.Models = []llmtest.Model{
+		{ID: "a/x:free", Name: "A X", Context: 32768, Prompt: "0", Completion: "0", Parameters: []string{"tools"}},
+		{ID: "plain"},
+	}
+	resp, err := http.Get(s.URL + "/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var got struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil || len(got.Data) != 2 {
+		t.Fatalf("decode: %v, %d entries", err, len(got.Data))
+	}
+	a, p := got.Data[0], got.Data[1]
+	if a["id"] != "a/x:free" || a["name"] != "A X" || a["context_length"] != float64(32768) || a["supported_parameters"] == nil {
+		t.Errorf("openrouter entry = %v", a)
+	}
+	if _, has := p["name"]; has || p["id"] != "plain" {
+		t.Errorf("plain entry = %v", p)
+	}
+}
+
+func TestServer_RetryAfterHeader(t *testing.T) {
+	s := llmtest.New(t, llmtest.Reply{Status: 429, RetryAfter: 3, Body: `{"error":{"message":"slow down"}}`})
+	resp, err := http.Post(s.URL+"/chat/completions", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 429 || resp.Header.Get("Retry-After") != "3" || !strings.Contains(string(body), "slow down") {
+		t.Fatalf("status %d, Retry-After %q, body %q", resp.StatusCode, resp.Header.Get("Retry-After"), body)
+	}
+}

@@ -63,6 +63,7 @@ func (p proxyStore) Repair(ms []chat.Message) error { return p.cur().Repair(ms) 
 func (p proxyStore) Flush() error                   { return p.cur().Flush() }
 func (p proxyStore) Thinking(on bool) error         { return p.cur().Thinking(on) }
 func (p proxyStore) Model(name string) error        { return p.cur().Model(name) }
+func (p proxyStore) Provider(name string) error     { return p.cur().Provider(name) }
 
 type noStore struct{}
 
@@ -74,6 +75,7 @@ func (noStore) Thinking(bool) error                  { return nil }
 func (noStore) Repair([]chat.Message) error          { return nil }
 func (noStore) Flush() error                         { return nil }
 func (noStore) Model(string) error                   { return nil }
+func (noStore) Provider(string) error                { return nil }
 
 // plugSessions wires the SessionFile into the Deps; called by begin.
 func (w *world) plugSessions(d *Deps) error {

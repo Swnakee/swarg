@@ -29,7 +29,8 @@ func (WriteFile) Spec() chat.ToolSpec {
 		Description: "Create or overwrite a file with the given content.",
 		Schema: json.RawMessage(`{"type":"object","properties":{` +
 			`"path":{"type":"string","description":"file path"},` +
-			`"content":{"type":"string","description":"the whole new file content"}},` +
+			`"content":{"type":"string","description":"the whole new file content"},` +
+			`"append":{"type":"boolean","description":"add the content to the end of the file instead of replacing it"}},` +
 			`"required":["path","content"],"additionalProperties":false}`),
 	}
 }
@@ -42,18 +43,21 @@ func (WriteFile) Confirm() bool { return true }
 
 // Block tells the model when to use write_file.
 func (WriteFile) Block() string {
-	return "write_file: create a file or replace a whole file. Small changes: edit_file. Leading / = project root.\n" +
+	return "write_file: create a file or replace a whole file. Small changes: edit_file. Leading / = project root. " +
+		"A long file: write the first part, then the next parts with \"append\": true.\n" +
 		`Example: {"path":"notes/todo.md","content":"- first item\n"}`
 }
 
 // Summary is the path of the call, or "" for bad JSON.
 func (WriteFile) Summary(args json.RawMessage) string { return pathOf(args) }
 
-// Run writes the content atomically, keeping the existing mode and CRLF line endings.
+// Run writes the content atomically, keeping the existing mode and CRLF line endings; with
+// append the content goes after the existing one (R-67).
 func (t WriteFile) Run(_ context.Context, env Env, args json.RawMessage) (Result, error) {
 	var a struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
+		Append  bool   `json:"append"`
 	}
 	if err := DecodeFor(t, args, &a, "path", "content"); err != nil {
 		return Result{}, err
@@ -62,11 +66,14 @@ func (t WriteFile) Run(_ context.Context, env Env, args json.RawMessage) (Result
 	if err != nil {
 		return Result{}, err
 	}
+	if err := nestedHint(env, name); err != nil {
+		return Result{}, err
+	}
 	mode, exists, err := statTarget(env.Root, name)
 	if err != nil {
 		return Result{}, err
 	}
-	data := []byte(a.Content)
+	data, verb := []byte(a.Content), "wrote "
 	if exists {
 		old, err := env.Root.ReadFile(name)
 		if err != nil {
@@ -74,6 +81,9 @@ func (t WriteFile) Run(_ context.Context, env Env, args json.RawMessage) (Result
 		}
 		if bytes.Contains(old, []byte("\r\n")) && !bytes.Contains(data, []byte("\r\n")) {
 			data = bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n"))
+		}
+		if a.Append {
+			data, verb = append(old, data...), "appended to "
 		}
 	}
 	if dir := filepath.Dir(name); dir != "." {
@@ -85,7 +95,7 @@ func (t WriteFile) Run(_ context.Context, env Env, args json.RawMessage) (Result
 		return Result{}, err
 	}
 	n := lineCount(a.Content)
-	return Result{Output: "wrote " + a.Path, Brief: strconv.Itoa(n) + " lines"}, nil
+	return Result{Output: verb + a.Path, Brief: strconv.Itoa(n) + " lines"}, nil
 }
 
 // ---------------------------------------------------------------------------

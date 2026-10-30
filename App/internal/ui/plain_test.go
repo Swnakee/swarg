@@ -340,3 +340,16 @@ func TestRunPlain_IgnoresActivity(t *testing.T) {
 		t.Errorf("output = %q, want only the answer", got)
 	}
 }
+
+// /skill in plain mode goes to SubmitSkill (the eval suite's explicit-call task); without a
+// skill Tool the agent refuses and no request is made.
+func TestRunPlain_SkillCommandWithoutSkills(t *testing.T) {
+	d, srv := plainDeps(t, llmtest.Reply{Chunks: []string{"never"}})
+	var out bytes.Buffer
+	if err := RunPlain(context.Background(), d, strings.NewReader("/skill deploy ship it\n"), &out); err != nil {
+		t.Fatalf("RunPlain: %v", err)
+	}
+	if !strings.Contains(out.String(), "no skills") || len(srv.Requests()) != 0 {
+		t.Fatalf("output %q, requests %d", out.String(), len(srv.Requests()))
+	}
+}

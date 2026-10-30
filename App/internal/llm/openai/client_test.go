@@ -664,8 +664,11 @@ func TestBody_ReasoningRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatal(err)
 	}
-	if v := got.Messages[1]["reasoning_content"]; v != "why" {
-		t.Errorf("reasoning_content = %v, want why", v)
+	// both names: mlx templates read reasoning_content, Ollama reads reasoning (R-64)
+	for _, key := range []string{"reasoning_content", "reasoning"} {
+		if v := got.Messages[1][key]; v != "why" {
+			t.Errorf("%s = %v, want why", key, v)
+		}
 	}
 }
 

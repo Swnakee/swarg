@@ -1,0 +1,2 @@
+Add a feature across three files of a small CLI (model, storage, command).
+Add a "remove <name>" command to the inventory CLI in inv/: it deletes the item from the stored inventory and prints "removed <name>"; if the item does not exist it prints "not found: <name>" and exits with code 1. Update the help text and README. Try it: python3 -m inv add apple 3, python3 -m inv remove apple, python3 -m inv list.

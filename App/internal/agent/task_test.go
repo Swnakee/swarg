@@ -759,3 +759,42 @@ func TestTask_Depth8CycleGuardRefusesAncestorGoal(t *testing.T) {
 		t.Fatalf("%d Tasks started, want 7 (the repeat refused)", n)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// /skill (SubmitSkill)
+// ---------------------------------------------------------------------------
+
+func TestSubmitSkill_AppliesTheSkillThenAnswers(t *testing.T) {
+	r := toolRig(t, newFakeTools())
+	if err := r.a.SubmitSkill("deploy", "ship it"); err != nil {
+		t.Fatal(err)
+	}
+	r.p.next(t).reply("a")
+	wait(t, r.a)
+	h := r.a.History()
+	assertHistoryValid(t, h)
+	if got := roles(h); fmt.Sprint(got) != "[user assistant tool assistant]" || h[0].Content != "ship it" {
+		t.Fatalf("history = %v / %q", got, h[0].Content)
+	}
+	if c := h[1].ToolCalls; len(c) != 1 || c[0].Name != "skill" || c[0].Args != `{"name":"deploy"}` {
+		t.Fatalf("prelude call = %+v", h[1].ToolCalls)
+	}
+	if !strings.HasPrefix(h[2].Content, "out:") {
+		t.Fatalf("skill result = %q", h[2].Content)
+	}
+}
+
+func TestSubmitSkill_BlankTextAndNoSkillTool(t *testing.T) {
+	r := toolRig(t, newFakeTools())
+	if err := r.a.SubmitSkill("deploy", "  "); err != nil {
+		t.Fatal(err)
+	}
+	r.p.next(t).reply("a")
+	wait(t, r.a)
+	if h := r.a.History(); h[0].Content != SkillOnlyText {
+		t.Fatalf("user text = %q", h[0].Content)
+	}
+	if err := startRig(t).a.SubmitSkill("deploy", "x"); !errors.Is(err, ErrNoSkills) { // no ToolRunner at all
+		t.Fatalf("err = %v", err)
+	}
+}

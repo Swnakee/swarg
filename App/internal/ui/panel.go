@@ -25,8 +25,9 @@ const (
 
 // Hover ids of the clickable panel items.
 const (
-	spotModel = "panel:model" // opens the model list
-	spotJobs  = "panel:jobs"  // lists the background jobs
+	spotModel  = "panel:model"  // opens the model list
+	spotServer = "panel:server" // opens the source list (/server)
+	spotJobs   = "panel:jobs"   // lists the background jobs
 )
 
 // panelItem is one item of the Bottom panel, its hover id ("" = not clickable) and its cells
@@ -35,6 +36,7 @@ type panelItem struct {
 	text   string
 	id     string
 	x0, x1 int
+	glue   bool // the next item follows without a separator (provider/model)
 }
 
 // panelItems are the items in order: model, context use, Generation speed, auto-approve,
@@ -45,12 +47,16 @@ func (m *model) panelItems() []panelItem {
 	if m.d.Approver.Auto() {
 		auto = autoOnText
 	}
-	items := []panelItem{
+	var items []panelItem
+	if m.providerName != "" {
+		items = append(items, panelItem{text: m.providerName + "/", id: spotServer, glue: true})
+	}
+	items = append(items, []panelItem{
 		{text: m.modelName, id: spotModel},
 		{text: agent.FormatMeter(m.used, m.limit, m.est)},
 		{text: m.speedText()},
 		{text: auto},
-	}
+	}...)
 	if m.thinking {
 		items = append(items, panelItem{text: thinkText})
 	}
@@ -66,18 +72,25 @@ func (m *model) panelItems() []panelItem {
 		x += ansi.StringWidth(items[i].text)
 		items[i].x1 = min(x, m.width)
 		items[i].x0 = min(items[i].x0, m.width)
-		x += ansi.StringWidth(panelSep)
+		if !items[i].glue {
+			x += ansi.StringWidth(panelSep)
+		}
 	}
 	return items
 }
 
 // panelLine renders the Bottom panel, cut to the width.
 func (m *model) panelLine() string {
-	var parts []string
+	var b strings.Builder
+	glued := true // no separator before the first item
 	for _, it := range m.panelItems() {
-		parts = append(parts, it.text)
+		if !glued {
+			b.WriteString(panelSep)
+		}
+		b.WriteString(it.text)
+		glued = it.glue
 	}
-	return noticeStyle.Render(ansi.Truncate(strings.Join(parts, panelSep), m.width, "…"))
+	return noticeStyle.Render(ansi.Truncate(b.String(), m.width, "…"))
 }
 
 // hotPanel registers the clickable panel items, on screen row y, as hover spots.
@@ -94,6 +107,8 @@ func (m *model) panelClick(id string) tea.Cmd {
 	switch id {
 	case spotModel:
 		return m.chooseModel("")
+	case spotServer:
+		return m.chooseServer("")
 	case spotJobs:
 		m.listJobs()
 	}

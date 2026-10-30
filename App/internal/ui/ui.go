@@ -70,7 +70,7 @@ type model struct {
 	sel                               selection // the highlighted text (content coordinates)
 	pr                                press     // the left button, while held
 	hv                                hover     // the pointer and the clickable spans of the last draw
-	pick                              *picker   // the in-app session picker while it is open
+	pick                              *menu     // the open menu (session picker, /skills, /mcp, ...) while there is one
 	suggSel                           int       // the selected command suggestion
 	typed                             string    // the input at the last update (a change resets suggSel)
 	copyNote                          string    // "copied N lines", shown in the status line
@@ -80,7 +80,8 @@ type model struct {
 	waiting                           []string       // Waiting Messages: sent, not taken by the agent yet (oldest first)
 	thinking                          bool           // the thinking mode shown in the Bottom panel
 	modelName                         string         // the Model choice shown in the Bottom panel
-	modelList                         []string       // the last model list shown by /model (for /model N)
+	modelRows                         []ModelRow     // the last model list shown by /model, in menu order (for /model N)
+	providerName                      string         // the Source name shown in the Bottom panel ("" = none)
 	speed                             float64        // the last measured Generation speed (EvSpeed)
 	hasSpeed                          bool
 	liveN                             int       // text chunks of the Step streaming now (live speed)
@@ -107,7 +108,7 @@ func newModel(ctx context.Context, d Deps, clock func() time.Time) *model {
 		d.Approver.SetAuto(true)
 	}
 	m := &model{d: d, ctx: ctx, clock: clock, tick: spinTick, bgTick: bgTick, ta: ta, cv: newConv(), cur: -1,
-		outBuf: map[int][]byte{}, sc: scrollState{follow: true}, limit: d.Limit, est: true, modelName: d.Model, thinking: d.Think}
+		outBuf: map[int][]byte{}, sc: scrollState{follow: true}, limit: d.Limit, est: true, modelName: d.Model, providerName: d.Provider, thinking: d.Think}
 	m.resize(defaultCol, 0)
 	m.rebuild(d.History)
 	return m
@@ -237,6 +238,9 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 	case modelsMsg:
 		m.onModels(msg)
 		return nil
+	case serversMsg:
+		m.onServers(msg)
+		return nil
 	case askGoneMsg:
 		if m.ask != nil && m.ask.reply == msg.reply {
 			m.ask = nil
@@ -315,6 +319,8 @@ func (m *model) onEvents(evs eventsMsg) tea.Cmd {
 			m.bd, m.hasBd = ev.Breakdown, true
 		case agent.EvModel:
 			m.modelName = ev.Text
+		case agent.EvProvider:
+			m.providerName = ev.Text
 		case agent.EvThinking:
 			m.thinking = ev.Text == "on"
 		case agent.EvSpeed:
@@ -410,6 +416,10 @@ func (m *model) say(text string) {
 func (m *model) submit(line string) tea.Cmd {
 	c, err := ParseCommand(line)
 	if err != nil {
+		if name, text, ok := m.skillLine(line); ok { // /<skill> [text] (R-83)
+			m.submitSkill(name, text)
+			return nil
+		}
 		m.say(err.Error())
 		return nil
 	}
@@ -444,10 +454,24 @@ func (m *model) submit(line string) tea.Cmd {
 		}
 	case KindModel:
 		return m.chooseModel(c.Name)
+	case KindServer:
+		return m.chooseServer(c.Name)
 	case KindThink:
 		m.think(c.Name)
 	case KindTask:
 		m.submitTask(c.Text)
+	case KindSkill:
+		m.submitSkill(c.Name, c.Text)
+	case KindSkills:
+		m.skills(c)
+	case KindMCP:
+		m.mcp(c)
+	case KindConfig:
+		if m.d.Config == nil {
+			m.say("settings are not available here")
+		} else {
+			m.openMenu(m.configMenu(), nil)
+		}
 	default:
 		m.addWaiting(c.Text) // shown at once, before the agent takes it (R-27)
 		m.d.Agent.Submit(c.Text)

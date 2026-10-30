@@ -38,7 +38,19 @@ type fakeModels struct {
 	calls int
 }
 
-func (f *fakeModels) List(context.Context) ([]string, error) { f.calls++; return f.ids, f.err }
+func (f *fakeModels) List(context.Context) ([]ModelRow, error) {
+	f.calls++
+	return idRows(f.ids...), f.err
+}
+
+// idRows makes plain rows (a server without a Catalog) from ids.
+func idRows(ids ...string) []ModelRow {
+	rows := make([]ModelRow, len(ids))
+	for i, id := range ids {
+		rows[i] = ModelRow{ID: id}
+	}
+	return rows
+}
 
 // withModels gives the rig a model-setting agent and a model list.
 func (r *rig) withModels(ids ...string) (*modelAgent, *fakeModels) {
@@ -114,9 +126,9 @@ func TestPanel_ClickModelFetchesTheList(t *testing.T) {
 	if fm.calls != 1 {
 		t.Fatalf("the model list was fetched %d times, want 1", fm.calls)
 	}
-	r.send(modelsMsg{ids: fm.ids})
-	for _, want := range []string{"1   a", "2 ◉ qwen", "3   c", "/model N"} {
-		r.wantLine(result{}, want)
+	r.send(modelsMsg{rows: idRows(fm.ids...)})
+	if v := r.view(); r.m.pick == nil || !strings.Contains(v, "  a") || !strings.Contains(v, "◉ qwen") || !strings.Contains(v, "  c") {
+		t.Fatalf("model menu: %q", v)
 	}
 }
 
@@ -186,7 +198,8 @@ func TestModelCmd_NumberFromTheList(t *testing.T) {
 	r := newRig(t)
 	ma, fm := r.withModels("a", "b")
 	r.enter("/model")
-	r.send(modelsMsg{ids: fm.ids})
+	r.send(modelsMsg{rows: idRows(fm.ids...)})
+	r.send(key(tea.KeyEscape, 0)) // the menu closes; the numbered form uses the fetched list
 	r.enter("/model 2")
 	if len(ma.set) != 1 || ma.set[0] != "b" {
 		t.Errorf("SetModel calls %q", ma.set)
@@ -325,7 +338,8 @@ func TestModelCmd_NumberOutsideTheListIsRefused(t *testing.T) {
 	r := newRig(t)
 	ma, fm := r.withModels("a", "b")
 	r.enter("/model 2") // no list shown yet
-	r.send(modelsMsg{ids: fm.ids})
+	r.send(modelsMsg{rows: idRows(fm.ids...)})
+	r.send(key(tea.KeyEscape, 0))
 	r.enter("/model 7")
 	if len(ma.set) != 0 {
 		t.Fatalf("SetModel calls %q, want none", ma.set)
@@ -357,7 +371,10 @@ func TestThinkCmd_SwitchesAndShowsInThePanel(t *testing.T) {
 		t.Errorf("SetThinking %v, panel %q", ta.set, r.panelText())
 	}
 	r.enter("/think")
-	r.wantLine(result{}, "thinking: on")
+	if r.m.pick == nil || !strings.Contains(r.view(), glyphAuto+" thinking on") {
+		t.Fatalf("/think menu: %q", r.view())
+	}
+	r.send(key(tea.KeyEscape, 0))
 	r.enter("/think off")
 	if len(ta.set) != 2 || ta.set[1] || strings.Contains(r.panelText(), thinkText) {
 		t.Errorf("SetThinking %v, panel %q", ta.set, r.panelText())

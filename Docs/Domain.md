@@ -22,13 +22,29 @@ A new domain term is added here before it appears in code, scenarios or docs.
 | Approval | The user's answer (allow or deny, with an optional note) to a mutating ToolCall | confirmation, permission | `agent.Approval` |
 | Abort | The second interrupt of a Turn: the Provider connection is closed at once, tools are killed, the server is checked afterwards | kill, cancel | `Agent.Abort` |
 | InputQueue | User input typed while a Turn runs, waiting to be injected at the next Step | buffer, pending input | `InputQueue` |
-| Provider | A model backend the core streams completions from (local mlx, later OpenRouter); reached only through the `agent.Provider` interface | backend, client, API | `Provider` |
+| Provider | A model backend the core streams completions from (local mlx, Ollama on another machine, OpenRouter); reached only through the `agent.Provider` interface; the config `type` (`openai`, `ollama`, `openrouter`) selects the request presets | backend, client, API | `Provider`, `config.Provider.Type` |
+| Source | The Provider entry in use at run time with its client, model and request presets; the user calls it the server (`/server`), the config key stays `providers`; switched between requests (R-100) | backend switch, endpoint | `agent.Source`, `Agent.SetSource`, `agent.EvProvider` |
+| Catalog | The model list of a Source as its server reports it: id, name, context length, prices, supported parameters (R-102) | model list, registry | `openai.ModelInfo`, `Client.Catalog` |
+| Recent models | Per Source, the model ids used before, newest first, kept in the user config dir (R-101) | history, MRU | `config.Recent` |
+| Cloud notice | The one-time notice per project shown at the first switch to a Source that is not local (R-104) | privacy warning, consent | `Approvals.Notice`, `config.Provider.Local` |
 | StreamEvent | One event of a streamed completion: text, prefill progress, usage, or the final done | chunk, token | `chat.StreamEvent` |
 | SystemPrompt | The first message of every request, assembled from Blocks | preamble, instructions | `prompt.Set.Build` |
 | Block | One switchable piece of the SystemPrompt (base, global `NN-name.md`, project `SWARG.md`, env, tool blocks); a `<name>.md` override file replaces a built-in one (R-49) | snippet, section, part | `prompt.Block` |
 | BackgroundJob | A shell command that outlives the ToolCall that started it; read and killed later by id (`bg1`, `bg2`, ...); not a Task (agent work) | daemon, task, process | `tools.Jobs` / `tools.JobInfo` |
 | Detach | The user's move of the running detachable ToolCall to the background; the call returns at once and its command becomes a BackgroundJob | suspend, push to bg | `ToolHooks.Detach`, `Agent.Background` |
 | Mod | An external process that extends swarg through the JSON protocol | plugin, extension | `Mod` |
+| Skill | A folder with `SKILL.md` (front matter `name`, `description`; body: instructions for the model) and optional files beside it; global in `<config dir>/skills/<name>`, project in `.swarg/skills/<name>` | plugin, prompt, command | `skills.Skill` |
+| Skill list | The one-line-per-Skill text (`- name: description`) in the SystemPrompt, enabled Skills only | menu, index | prompt block `skills` |
+| Applying a Skill | The `skill` ToolCall whose ToolResult is the body of `SKILL.md` (or one file of the Skill folder) | loading, invoking | `skills.Tool` |
+| MCP Server | An external program (stdio, `command`) or endpoint (Streamable HTTP, `url`) speaking MCP JSON-RPC that offers Tools; configured under `mcp.servers.<name>` | plugin, mod, integration | `mcp.Client`, `config.MCPServer` |
+| Transport | How swarg reaches an MCP Server: a subprocess with one JSON message per line (stdio) or HTTP POSTs to the url (Streamable HTTP) | connection, channel | `mcp.Transport`, `stdioTransport`, `httpTransport` |
+| Session (MCP) | The server-side state behind an `Mcp-Session-Id` an HTTP server hands out at `initialize`; swarg sends it back on every request and ends it with DELETE | token, cookie | `httpTransport.session` |
+| MCP Tool | A Tool offered by an MCP Server, named `mcp__<server>__<tool>` in swarg | remote tool, function | `mcp.tool` |
+| Server state | `running`, `off` (disabled or hidden), `failed` (did not start), `crashed` (exited later), `needs approval` (a project server the user has not approved) | status, health | `mcp.State` |
+| Menu | A list in the list area navigated with arrows, typed filter, mouse and Esc: the Session picker, `/skills`, `/mcp`, `/model`, `/think`, `/config` | dialog, popup, widget | `ui.menu`, `ui.menuRow` |
+| Scope | Where a setting is saved: `global` (the user config dir) or `project` (`<project>/.swarg/`) | level, layer, profile | `ui.ScopesAPI`, `config.ProjectConfig` |
+| Project config | `<project>/.swarg/config.json` (+ `config.local.json`, personal, git-ignored by the user), layered over the global config | workspace settings, .mcp.json | `config.LoadLayered`, `config.Layers` |
+| Approval (MCP) | The user's one-time consent per project to run a project MCP Server, stored in the user config dir | trust, allow | `config.Approvals`, `mcp.Client.Approve` |
 | Hook | A named point where swarg emits an Event to Mods | callback, listener | `Hook` |
 | Event | The data swarg sends to Mods at a Hook | notification, signal | `Event` |
 | WorkSpan | The Messages of one Turn between its TurnStart Message and its final answer: assistant Messages with ToolCalls, their ToolResults, intermediate text | span, work block, turn log | `agent.span` |
@@ -48,7 +64,7 @@ A new domain term is added here before it appears in code, scenarios or docs.
 | Bottom panel | The row under the input box: model, context use, speed, auto-approve, background jobs | status bar, footer | `ui model.panelLine` |
 | Generation speed | Completion tokens per second of one Step, from the first generated token to the end of the stream | tps, throughput | `agent.EvSpeed` |
 | Model choice | The model id requests name; chosen from the Provider's list, may change in the middle of a Session | model switch | `Agent.SetModel`, `agent.EvModel` |
-| Thinking mode | On or off: with it on every request asks the model to think (`enable_thinking`), uses the thinking sampling and a larger output limit; off by default; switched with `/think` | reasoning switch, think flag | `Agent.SetThinking`, `agent.EvThinking`, `config.Provider.Thinking` |
+| Thinking mode | On or off: with it on every request asks the model to think (`enable_thinking`, or `reasoning_effort` on Ollama), uses the thinking sampling and a larger output limit; off by default; switched with `/think` | reasoning switch, think flag | `Agent.SetThinking`, `agent.EvThinking`, `config.Provider.Thinking` |
 | Suggestion | A command offered above the input while its name is being typed; Tab or a click completes it | autocomplete, hint, popup | `ui.suggestions`, `model.completeSuggestion` |
 | Task | One goal worked on by the agent loop in its own history, started by a `task` ToolCall of a Session Turn or of another Task (its parent), ending in a TaskResult; the goal text is its TurnStart; not a BackgroundJob (a process) | sub-agent, job, thread, subtask | `agent.conversation` (depth >= 1), `agent.runTask` |
 | TaskResult | The one text a Task returns to its parent: a status line (`done; files: ...`), the model's report and `steps: N/M`; stored as the ToolResult of the `task` ToolCall | summary, output, return value | `agent.taskResult` |
@@ -155,6 +171,27 @@ Rules are numbered `R-n`; each one gets BDD scenarios (normal, boundary, failure
   with the idle error. The limit must cover a long silent generation: mlx_lm.server sends a tool
   call in one chunk at the end, so a client cannot tell a slow tool call from a stopped server;
   Esc aborts at once meanwhile.
+- R-64 A Provider of type `ollama` (Ollama's OpenAI-compatible `/v1`) switches the Thinking mode
+  with `reasoning_effort`: off = `"none"`, on = `"high"` (temperature 0.6, top_p 0.95,
+  presence_penalty 0); `chat_template_kwargs`, `top_k`, `min_p` and `repetition_penalty` are not
+  sent because Ollama ignores them. Without `reasoning_effort` Qwen3.5 thinks by default, so the
+  preset carries `"none"`. The model's reasoning arrives as `reasoning` and is sent back under both
+  `reasoning` and `reasoning_content`, so the server's template can reproduce the prompt prefix.
+- R-65 When the usage of a Step reports fewer than half of the estimated prompt tokens of a
+  request above 2048 tokens, the user is warned once per conversation (the Session or a Task) that the server read only part of
+  the prompt (its context window is smaller than the ContextLimit; Ollama: `OLLAMA_CONTEXT_LENGTH`).
+  `/clear` re-arms the warning. A server cuts the prompt silently; the usage is the only trace.
+- R-66 A file path whose first segment repeats the name of the project folder (`work/greet.py`
+  written from `/work`) while no such subfolder exists is refused by `write_file` and `edit_file`
+  with the right path in the error (`use "greet.py"`), so a nested copy of the folder never
+  appears. Once the subfolder exists the path is ordinary. Small models repeat the folder name
+  of the Working directory line of the prompt (T7: 11 of 155 eval runs, all four models).
+- R-67 `write_file` takes `"append": true` to add the content after the existing one (a missing
+  file is created; CRLF is kept), so a long file can be written in parts. The nudge after an
+  undelivered Step (F11) names the output limit in tokens and this recipe (first part with
+  `write_file`, the next parts with `append`): the 2B looked for an append in `edit_file` with an
+  empty `old`. The 4B and 9B ignore the nudge and repeat the whole file, so the Ollama preset's
+  max_tokens is 4096 (a 250-line file is ~2800 tokens; T7 code-07).
 - R-31 The Bottom panel shows exactly: model, context use (percent and tokens), Generation speed,
   auto-approve state, running background jobs (only when > 0: nothing extra when idle), plus a
   transient `copied N lines`. A click on the model
@@ -220,6 +257,12 @@ Rules are numbered `R-n`; each one gets BDD scenarios (normal, boundary, failure
   loopback, private, link-local, carrier-grade NAT, multicast or unspecified IPs (every resolved IP
   is checked, also after each redirect) unless `web.allow_private` is set; without a network it fails
   with a clear one-line error and never hangs (T4 tools).
+- R-70 `web_fetch` returns a long page in pages of at most 8000 bytes (argument `page`, default 1);
+  every page but the last ends with a note naming the next page, a page past the end is an error
+  that says how many pages there are; nothing in the middle of a page is dropped (T8 web).
+- R-71 `web_fetch` page text leaves out site chrome: `nav`, `aside` and `footer` (T8 web).
+- R-72 A link in `web_fetch` text keeps its address: `text (absolute url)`; links within the same
+  page and non-http links keep only their text (T8 web).
 - R-48 The note in a cut tool result names what gets the rest back: for command output "rerun with a
   filter (grep, head, tail)", for files and other results "use read_file offset/limit or grep"
   (T4 tools).
@@ -227,6 +270,121 @@ Rules are numbered `R-n`; each one gets BDD scenarios (normal, boundary, failure
   `tool-<name>` block), replaces that Block's text (global `NN-name` Blocks are not replaceable); the Block keeps its order and on/off state, and
   the replacement is reported as a warning at start. `project`, `env` and unknown names are not
   replaced (warning). This is how prompt variants are compared on one build (T5 prompts).
+
+- R-80 Skills live in `<config dir>/skills/<name>/SKILL.md` (global) and `<cwd>/.swarg/skills/<name>/SKILL.md`
+  (project; the working directory only). The folder name is the Skill's name (`^[a-z0-9_-]{1,32}$`); a
+  project Skill replaces a global one of the same name. A SKILL.md without a `description` is skipped
+  with a warning. Loaded once at start (T8 S).
+- R-81 The enabled Skills are listed in the SystemPrompt as `- name: description` (descriptions cut at
+  160 characters) under one heading; no Skills loaded means no list and no `skill` Tool, so a
+  project without Skills pays no prompt tokens.
+- R-82 The `skill` Tool (`{name, file?}`, read-only, no approval) returns the body of `SKILL.md`
+  without the front matter plus the list of the folder's other files, or with `file` one of them
+  (confined to the Skill folder). An unknown name lists the enabled Skills; a disabled Skill is
+  refused. In history the result is stubbed (`[skill x: applied earlier; call it again if needed]`).
+- R-83 `/skill <name> [text]` (and `/<name>` for a loaded Skill when no built-in command has that
+  name) starts a Turn whose first Step is a synthetic `skill` ToolCall, then the model answers the
+  text ("Apply this skill." when none). Like a /task goal it never joins a running Turn.
+- R-84 `skills.disabled` in the config and `/skills on|off <name>` in the app switch a Skill off: out
+  of the list, refused by the Tool; `/skills` lists them. Above 20 enabled Skills a warning at start.
+- R-85 MCP Servers come from `mcp.servers.<name>` (`command`+`args`+`env` for stdio, `url` for
+  Streamable HTTP (R-91), `disabled`, `trust`, `tools`, `timeout_sec`); `env` values pass through
+  `os.ExpandEnv`, so a secret is named, never written. Every enabled server starts at swarg start,
+  in parallel, each bounded by 10 s (handshake `initialize` + `notifications/initialized`,
+  `tools/list` with `nextCursor`); an unknown protocol version in the answer is a failure (T8 M).
+- R-86 MCP Tools are offered as `mcp__<server>__<tool>` with the description cut at 200 characters
+  and the server's `inputSchema` as is; the arguments go to `tools/call` unchanged. The text content
+  blocks are the ToolResult; `isError` makes it an error result the model sees; no answer within
+  `timeout_sec` (default 60 s) is an error naming the limit and leaves the server running; a server
+  that exited answers `mcp server "x" exited; /mcp restart x` and its Tools stay known until the
+  restart. Servers that gave `instructions` are quoted in the `mcp` prompt block (cut at 200).
+- R-87 An MCP Tool asks for approval like `shell`, unless the server is `trust: true` AND the tool
+  carries `annotations.readOnlyHint: true` (then free and parallel like `read_file`), or
+  `mcp.confirm` is false (frees them all). The hint alone never frees a tool.
+- R-88 `tools: [...]` on a server is the allowlist offered to the model (`/mcp <server>` still lists
+  every tool); `/mcp on|off <server>` hides or shows a server's Tools for this run, `/mcp restart
+  <server>` starts it again (also from failed or crashed), `/mcp` lists state and tool counts.
+- R-89 Skills and MCP are counted outside the fixed prompt budget of the built-ins (1200 tokens):
+  the Skill list, the `skill` Tool, the MCP Tool specs and the `mcp` block have their own ceiling of
+  1500 tokens, measured at start; above it one warning names the three biggest items and nothing
+  is dropped (the owner trims with `mcp.servers.<name>.tools`, `skills.disabled`, shorter descriptions).
+- R-91 An MCP Server reached by `url` works like a stdio one above the Transport: the same tool
+  names, `trust`, `tools`, approvals, `timeout_sec`, `/mcp`. Exactly one of `command` and `url` is
+  required (a clear config error otherwise); `headers` (only with `url`) are sent on every request
+  and their values pass through `os.ExpandEnv`, so a bearer token is `"Authorization": "Bearer
+  ${TOKEN}"`, never a literal (T9).
+- R-92 Streamable HTTP (MCP 2025-11-25): every JSON-RPC message is one POST to the url with
+  `Accept: application/json, text/event-stream`; a request's answer is one JSON object or an SSE
+  stream whose `data` events are messages (the response, possibly server notifications before it);
+  a notification is answered 202. An `Mcp-Session-Id` from the `initialize` response is sent back on
+  every later request and on the DELETE that ends the Session at close (405 ignored); every request
+  after `initialize` carries `MCP-Protocol-Version` with the negotiated version. swarg opens no GET
+  stream: it accepts no server-initiated requests (a request inside a stream gets `method not found`).
+- R-93 HTTP failures are ToolResults or start warnings the user can act on: a status is named
+  (`HTTP 500: <body head>`), 401 says `the server needs authentication; set headers.Authorization`,
+  an unreachable url says `cannot reach <url>: <cause>`, a wrong content type `bad answer: <type>`.
+  A 404 to a request carrying a Session id means the Session expired: swarg re-initializes once (new
+  Session, fresh tool list) and repeats the call once; a second expiry is the error `session
+  expired`. A hung exchange ends with the server's timeout like a stdio call. The server's state
+  (`/mcp`) and `/mcp restart` work as for stdio (I-31).
+- R-94 A url server is reached safely: plain `http://` only when the host is `localhost` or an
+  address in a loopback, private or link-local range (a host name is resolved at start), else
+  `https://` is required (the server fails to start with `use https`); a redirect to another scheme
+  or host is refused; header values stay inside the Transport (I-32).
+- R-95 The configuration is layered: Defaults <- the global `config.json` <- the project's
+  `.swarg/config.json` <- `.swarg/config.local.json`. Files merge as JSON objects key by key (a
+  project entry of `mcp.servers.x` or `providers.p` changes only the keys it names), lists and
+  scalars replace; an unknown field names its file. A project without `.swarg/` loads exactly
+  as before (T10).
+- R-96 A project file never lowers safety: `tools.auto_approve: true`, `web.confirm: false`,
+  `mcp.confirm: false` and `trust: true` on an MCP Server are kept at the global value with a
+  warning at start; saving such a value into the project scope is refused with the same text (T10).
+- R-97 An MCP Server defined by a project file runs only after the user approved it once for
+  that project (`/mcp approve <server>`, or the menu); until then its state is `needs approval`,
+  nothing of it runs and no Tool is offered. Approvals live in `<config dir>/approvals.json`
+  keyed by project directory and the hash of the server entry: a changed entry asks again.
+  Global servers need no approval (T10).
+- R-98 Switches are saved: `/skills on|off <name> [scope]` and `/mcp on|off <server> [scope]`
+  apply at once and write `skills.disabled` / `mcp.servers.<name>.disabled` into the scope's
+  file; the default scope is `project` when the project has `.swarg/`, else `global`. `/config`
+  saves every change the same way (model, thinking and auto-approve also apply at once, the rest
+  at the next start). A switch whose write fails stays applied for the run and says why (T10).
+- R-99 One menu engine serves every list of the app: rows with a cursor (arrows, j/k, PgUp/PgDn,
+  Home/End), a typed filter, hover and click on rows and on their right label, the wheel, Esc (q)
+  closes or returns to the parent menu, Tab cycles the save scope, a confirmation in the footer
+  (`y` / buttons). A menu opens during a Turn; an approval prompt closes it. `/skills` (Enter
+  applies, Space switches), `/mcp` (Enter shows the tools, Space switches, r restarts, a approves),
+  `/model`, `/think`, `/config`; the commands with arguments keep working (T10).
+- R-100 The Source is switched at run time (`/server <name>`, the menu, the panel's provider item):
+  the next request built from then on goes to the new server with its model, presets, limits and
+  idle timeout; a request in flight is never touched (I-36). The model is the Source's last used one,
+  else its configured default; the ContextLimit is re-read; when the history no longer fits the new
+  limit a Compaction runs before the first request. A Source that is not defined, invalid or without
+  its key (`no key: set <VAR>`) is refused and nothing changes. `/server` lists every configured
+  Source with type, address and state (`ok`, `down: <cause>`, `no key: set <VAR>`, `bad config:
+  <reason>`), the active one marked (T11).
+- R-101 `/model` lists only the active Source's models, its Recent models first; every model used on a
+  Source is remembered per Source in the user config dir (`recent.json`). The SessionFile records the
+  Source (header and switch lines); a resumed Session continues on its last Source with its last
+  model; a file without a Source (before T11) resumes on the configured one. The Bottom panel shows
+  `provider/model` (T11).
+- R-102 The `openrouter` Provider type is OpenAI-compatible with the key from `OPENROUTER_API_KEY`
+  (preset `providers.openrouter`, `https://openrouter.ai/api/v1`, no local sampling in the body).
+  Its Catalog is filtered to tool-capable models (`supported_parameters` has `tools`); rows show
+  `free` or the price per million tokens; typing searches id and name; the ContextLimit of a model
+  is the Catalog's `context_length` (no hand table); the Thinking mode sends `reasoning: {effort:
+  high}` (T11).
+- R-103 A failed request has a clear text: 401 `refused the API key`, 402 `no credits`, 404 `no such
+  model ... /model lists the available ones`, 429 `rate limited` (one wait for a `Retry-After` of at
+  most 30 s, then one retry, never a loop), 5xx `failed upstream`; every text carries the status and
+  the body snippet, never the key (T11).
+- R-104 A Source that is not local (https, or a public address) sees the conversation and the files
+  the tools read: the first switch to one per project shows a notice once (kept in `approvals.json`).
+  The key is read from the environment variable named by `api_key_env` only; a configured active
+  Source without its key is a start error naming the variable (T11).
+- R-90 An unknown Tool name in a ToolCall is an error ToolResult that names the offered Tools
+  sharing a word (3+ letters, split on `_`/`-`, `mcp` ignored) with it: `unknown tool save_tool;
+  did you mean mcp__demo__save?` (at most three). T8 eval: the 9B called `save_tool` for an MCP tool.
 
 ## Invariants
 
@@ -248,6 +406,21 @@ Invariants are numbered `I-n`; each one is a test target.
   the same last model as the live agent.
 - I-30 Every thinking switch is recorded in the SessionFile; a resumed Session continues in the last
   recorded mode, a file with no thinking line (older swarg) resumes with thinking off.
+- I-31 No MCP Server failure stops or crashes swarg: a server that does not start is a warning, one
+  that exits later makes its Tools answer with the state, a hung call ends with the timeout; the
+  built-in Tools and the other servers keep working (T8 M). A url server down, refusing (4xx/5xx)
+  or forgetting its Session is the same kind of failure (T9).
+- I-33 A project file never lowers safety: whatever it says, auto-approve, the web and MCP
+  confirmations and the trust of a server stay at the global values (R-96) (T10).
+- I-34 An MCP Server defined by a project runs nothing before the user's approval for that
+  project and that entry (R-97) (T10).
+- I-35 An API key never leaves the HTTP client: it is not in a config value, a SessionFile, a Trace,
+  a notice or any error text (the status texts carry the status and the body snippet only) (T11).
+- I-36 A Source switch never changes a request in flight: the running stream ends on the old server;
+  only requests built afterwards use the new one (T11).
+- I-32 The values of `mcp.servers.<name>.headers` never leave the HTTP Transport: not in a trace, a
+  SessionFile, a log, a warning, a ToolResult, `/mcp <server>` or any error text (header names may
+  be named, values never) (T9).
 - I-10 Moving the pointer changes nothing but the look: no scroll, no selection, no toggle, nothing
   reaches the agent (T3 ui).
 - I-12 The SessionFile replays to the parent history with the TaskResults and without the Tasks'
@@ -263,7 +436,7 @@ Invariants are numbered `I-n`; each one is a test target.
 
 ## Open questions
 
-- Q-1 The Hook list and the Mod protocol (to be designed in a later task).
+- Q-1 The Hook list of mods (to be designed in a later task). Decided in T8 M: a mod that offers Tools is an MCP Server (`mcp.servers`); only hooks still need a protocol.
 
 ## Out of scope
 

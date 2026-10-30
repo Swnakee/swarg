@@ -501,3 +501,64 @@ func TestMain_ContinueKeepsTheLastChosenModel(t *testing.T) {
 		t.Errorf("the file's last model %q, want the --model choice recorded", l.Model())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Sources at start (R-101, R-104)
+// ---------------------------------------------------------------------------
+
+// A resumed session continues on its last Source (recorded by a /server switch) with that
+// Source's model; the hint names it.
+func TestMain_ContinueRestoresTheSessionsProvider(t *testing.T) {
+	e := newEnv(t)
+	first := llmtest.New(t, say("one"))
+	second := llmtest.New(t, say("two"))
+	cfgPath := filepath.Join(e.home, "config.json")
+	body := `{"providers":{"second":{"type":"openai","base_url":"` + second.URL + `","model":"m2","context_limit":1000,"max_tokens":100}}}`
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, errOut, code := e.swarg(t, nil, "go", "--yes", "--config", cfgPath, "--base-url", first.URL, "--model", "m1"); code != 0 {
+		t.Fatalf("first run: exit %d, %q", code, errOut)
+	}
+	fs := files(t, e.sdir(t), "*.jsonl")
+	if len(fs) != 1 {
+		t.Fatalf("session files %v", fs)
+	}
+	f, err := os.OpenFile(fs[0], os.O_APPEND|os.O_WRONLY, 0o600) // a /server switch made in the app
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString(`{"provider":"second"}` + "\n" + `{"model":"m2"}` + "\n") // SetSource writes both lines
+	f.Close()
+	_, errOut, code := e.swarg(t, nil, "again", "--yes", "--config", cfgPath, "--continue")
+	if code != 0 || !strings.Contains(errOut, "continuing on the session's source second") {
+		t.Fatalf("exit %d, %q", code, errOut)
+	}
+	if reqs := second.Requests(); len(reqs) != 1 || reqs[0]["model"] != "m2" {
+		t.Errorf("the second source got %v, want one request on m2", reqs)
+	}
+	if len(first.Requests()) != 1 {
+		t.Errorf("the first source got %d requests after the switch, want none more", len(first.Requests())-1)
+	}
+	l, err := session.Load(fs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Provider() != "second" || l.Header.Provider != "local" {
+		t.Errorf("file provider %q header %q", l.Provider(), l.Header.Provider)
+	}
+}
+
+// The active Source without its key is a start error that names the variable (R-104).
+func TestMain_ActiveProviderWithoutKeyIsAStartError(t *testing.T) {
+	e := newEnv(t)
+	cfgPath := filepath.Join(e.home, "config.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"provider":"openrouter"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.Unsetenv("OPENROUTER_API_KEY")
+	_, errOut, code := e.swarg(t, nil, "go", "--yes", "--config", cfgPath)
+	if code != 2 || !strings.Contains(errOut, `provider "openrouter": no key: set OPENROUTER_API_KEY`) {
+		t.Fatalf("exit %d, %q", code, errOut)
+	}
+}

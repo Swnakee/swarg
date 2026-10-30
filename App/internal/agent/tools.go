@@ -281,6 +281,9 @@ func (a *Agent) exec(c *conversation, p pendingCall, shown chat.ToolCall) (res r
 	case p.bad != "":
 		return failed(errors.New(p.bad))
 	case !known && !task:
+		if sim := similarTools(p.call.Name, a.deps.Tools.Specs()); len(sim) > 0 { // R-90
+			return failed(fmt.Errorf("unknown tool %s; did you mean %s?", p.call.Name, strings.Join(sim, ", ")))
+		}
 		return failed(fmt.Errorf("unknown tool %s", p.call.Name))
 	case ctx.Err() != nil:
 		return note(resCancelled)
@@ -334,4 +337,36 @@ func denial(s string) result {
 func failed(err error) result {
 	s := "error: " + err.Error()
 	return result{output: s, brief: s, err: err}
+}
+
+// similarTools lists (at most 3, in offer order) the offered tools that share a word of three or
+// more letters with name (words are split on "_" and "-"; "mcp" is ignored): the model mistyped
+// or shortened a name, the error tells it which one it meant (R-90).
+func similarTools(name string, specs []chat.ToolSpec) []string {
+	words := func(s string) map[string]bool {
+		out := map[string]bool{}
+		for _, w := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return r == '_' || r == '-' }) {
+			if len(w) >= 3 && w != "mcp" {
+				out[w] = true
+			}
+		}
+		return out
+	}
+	mine := words(name)
+	var out []string
+	for _, sp := range specs {
+		if sp.Name == name {
+			continue
+		}
+		for w := range words(sp.Name) {
+			if mine[w] {
+				out = append(out, sp.Name)
+				break
+			}
+		}
+		if len(out) == 3 {
+			break
+		}
+	}
+	return out
 }

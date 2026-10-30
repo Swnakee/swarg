@@ -221,7 +221,7 @@ func TestView_MouseModeAllMotion(t *testing.T) {
 	if got := r.m.View().MouseMode; got != tea.MouseModeAllMotion {
 		t.Errorf("main view mouse mode %v", got)
 	}
-	if got := newPicker(pickRows()).View().MouseMode; got != tea.MouseModeAllMotion {
+	if got := newPicker(pickRows(), "", nil).View().MouseMode; got != tea.MouseModeAllMotion {
 		t.Errorf("picker mouse mode %v", got)
 	}
 }
@@ -231,7 +231,7 @@ func TestView_MouseModeAllMotion(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHover_PickerRowUnderlined(t *testing.T) {
-	p := newPicker(pickRows()) // rows: c3 (y=1), b2 unreadable (y=2), a1 (y=3)
+	p := newPicker(pickRows(), "", nil) // rows: c3 (y=1), b2 unreadable (y=2), a1 (y=3)
 	drive(p, tea.WindowSizeMsg{Width: 80, Height: 10})
 	rows := func() []string { return strings.Split(p.View().Content, "\n") }
 	drive(p, tea.MouseMotionMsg{X: 4, Y: 3, Button: tea.MouseNone})
@@ -246,8 +246,8 @@ func TestHover_PickerRowUnderlined(t *testing.T) {
 	if got := underlined(rows()); len(got) != 1 || got[0] != 1 {
 		t.Fatalf("the selected row must show the hover too: %v", got)
 	}
-	if id, ok := p.hv.at(4, 1); !ok || id != "sess:c3" {
-		t.Errorf("spot = %q %v, want sess:c3", id, ok)
+	if id, ok := p.hv.at(4, 1); !ok || id != "row:c3" {
+		t.Errorf("spot = %q %v, want row:c3", id, ok)
 	}
 	drive(p, tea.MouseMotionMsg{X: 4, Y: 0, Button: tea.MouseNone})
 	if got := underlined(rows()); len(got) != 0 {

@@ -16,7 +16,7 @@ func TestHTMLToText_Cases(t *testing.T) {
 		"only script":     {"<script>alert(1)</script>", ""},
 		"nested lists":    {"<ul><li>a<ul><li>b</li></ul></li></ul>", "- a\n\n- b"},
 	} {
-		got, err := htmlToText(strings.NewReader(c.in), "text/html")
+		got, err := htmlToText(strings.NewReader(c.in), "text/html", nil)
 		if err != nil || got != strings.ReplaceAll(c.want, " ", " ") {
 			t.Errorf("%s: got %q (%v), want %q", name, got, err, c.want)
 		}

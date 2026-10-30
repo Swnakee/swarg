@@ -58,7 +58,7 @@ func TestPicker_FrameIsExactlyHeightRowsAtEverySize(t *testing.T) {
 	for _, filter := range []string{"", "t1", "zzz-no-match"} {
 		for h := 3; h <= 50; h++ {
 			for _, w := range []int{1, 5, 20, 33, 80, 200} {
-				p := newPicker(rows)
+				p := newPicker(rows, "", nil)
 				p.Update(tea.WindowSizeMsg{Width: w, Height: h})
 				if filter != "" {
 					drive(p, ptype("/"))

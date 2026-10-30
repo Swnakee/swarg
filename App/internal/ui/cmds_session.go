@@ -62,24 +62,25 @@ func (m *model) openPicker() {
 	case len(rows) == 0:
 		m.say("no saved sessions")
 	default:
-		p := newPicker(rows)
+		p := newPicker(rows, m.d.Sessions.Current(), m.d.Sessions.Delete)
 		p.hv, p.title = &m.hv, "Saved sessions"
-		p.current, p.del = m.d.Sessions.Current(), m.d.Sessions.Delete
+		p.onChoose = m.openSession
 		m.pick = p
 	}
 }
 
-// pickAct applies what the picker decided after a key or mouse message: a close, or the
-// chosen Session (the picker stays open when opening it fails, with the reason in its footer).
+// pickAct applies what the open menu decided after a key or mouse message: a close (back to the
+// parent menu, if any), or the chosen row handed to the menu's onChoose (a true closes the menu;
+// the Session picker stays open when opening fails, with the reason in its footer).
 func (m *model) pickAct(a pickAction) {
 	switch a {
 	case pickClose:
-		m.pick = nil
+		m.pick = m.pick.parent
 	case pickChosen:
 		id := m.pick.chosen
 		m.pick.chosen = ""
-		if m.openSession(id) {
-			m.pick = nil
+		if m.pick.onChoose == nil || m.pick.onChoose(id) {
+			m.pick = m.pick.parent
 		}
 	}
 }

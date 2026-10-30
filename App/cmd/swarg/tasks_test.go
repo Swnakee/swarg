@@ -14,7 +14,7 @@ func TestPromptBlocks_TaskBlockOnOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	has := func(depth int) bool {
-		for _, b := range promptBlocks(ts, depth) {
+		for _, b := range promptBlocks(ts, depth, nil, nil) {
 			if b.Name == "tool-task" && strings.HasPrefix(b.Text, "task: ") {
 				return true
 			}

@@ -1,0 +1,2 @@
+- rev 6: footer shows the revision
+- rev 5: money formatting moved to util
