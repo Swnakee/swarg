@@ -33,6 +33,9 @@ const (
 type Client struct {
 	// IdleTimeout ends a stream that receives no bytes for this long. Keepalives count as bytes.
 	IdleTimeout time.Duration
+	// Key, when set, supplies the API key on every request instead of the one given to New, so a
+	// key set or rotated while swarg runs is used at once (R-107). "" sends no Authorization.
+	Key func() string
 
 	baseURL string
 	apiKey  string
@@ -138,8 +141,12 @@ func (c *Client) once(ctx context.Context, method, path string, body []byte, acc
 		hreq.Header.Set("Content-Type", "application/json")
 	}
 	hreq.Header.Set("Accept", accept)
-	if c.apiKey != "" {
-		hreq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	key := c.apiKey
+	if c.Key != nil {
+		key = c.Key()
+	}
+	if key != "" {
+		hreq.Header.Set("Authorization", "Bearer "+key)
 	}
 	resp, err := c.hc.Do(hreq)
 	if err != nil {
@@ -387,6 +394,7 @@ type wireUsage struct {
 	PromptTokensDetails *struct {
 		CachedTokens int `json:"cached_tokens"`
 	} `json:"prompt_tokens_details"`
+	Cost json.RawMessage `json:"cost"` // OpenRouter: credits (USD) charged; absent on other servers, read leniently (I-39)
 }
 
 // chunk handles one JSON data event: delta text, finish reason and usage.
@@ -429,6 +437,10 @@ func (p *pumper) chunk(data string) error {
 	u := chat.Usage{PromptTokens: c.Usage.PromptTokens, CompletionTokens: c.Usage.CompletionTokens}
 	if c.Usage.PromptTokensDetails != nil {
 		u.CachedTokens = c.Usage.PromptTokensDetails.CachedTokens
+	}
+	var f float64
+	if json.Unmarshal(c.Usage.Cost, &f) == nil && f > 0 { // absent, null or not a number: no cost, never an error (I-39)
+		u.Cost = f
 	}
 	return p.emit(chat.StreamEvent{Kind: chat.EventUsage, Usage: u})
 }

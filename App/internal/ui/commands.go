@@ -38,6 +38,10 @@ const (
 	KindSkills // /skills [on|off <name>]
 	KindMCP    // /mcp ...
 	KindConfig // /config
+	KindKeys   // /keys [init] (R-106, R-110)
+	KindCost   // /cost (R-113)
+	KindAgents // /agents [on|off <name> | new <name> | edit <name>] [global|project]
+	KindPrompt // /prompt [profile [global|project]] (R-117)
 )
 
 // Command is a parsed input line. Text is set for KindText, Name and On for KindBlock, Name
@@ -82,7 +86,11 @@ var commands = []cmdSpec{
 	{name: "/skill", args: "<name> [text]", desc: "apply a skill, then answer the text", kind: KindSkill, parse: parseSkill},
 	{name: "/skills", args: "[on|off <name> [global|project]]", desc: "skills menu, or switch one", kind: KindSkills, parse: parseSkills},
 	{name: "/mcp", args: "[<server> | on|off|restart|approve <server> [global|project]]", desc: "MCP servers menu: state, tools, switch, restart, approve", kind: KindMCP, parse: parseMCP},
+	{name: "/agents", args: "[on|off <name> | new <name> | edit <name>] [global|project]", desc: "sub-agent types (global by default): menu, switch one, create or edit a type file", kind: KindAgents, parse: parseAgents},
+	{name: "/prompt", args: "[compact|standard|full [global|project]]", desc: "prompt profile: how much instruction text the model gets", kind: KindPrompt, parse: parsePrompt},
 	{name: "/config", desc: "settings menu (saved to the chosen scope)", kind: KindConfig},
+	{name: "/keys", args: "[init]", desc: "API keys menu (view only); init creates the keys file template", kind: KindKeys, parse: parseKeys},
+	{name: "/cost", desc: "what this session has cost, and the key's usage and limit", kind: KindCost},
 	{name: "/exit", desc: "quit swarg", kind: KindExit},
 }
 
@@ -92,8 +100,11 @@ var (
 	errTaskUsage   = errors.New("usage: /task <goal>")
 	errToolUsage   = errors.New("usage: /tool N (N is the number after # on a tool line)")
 	errSkillUsage  = errors.New("usage: /skill <name> [text]")
+	errAgentsUsage = errors.New("usage: /agents | /agents on|off <name> [global|project] | /agents new <name> [global|project] | /agents edit <name>")
 	errSkillsUsage = errors.New("usage: /skills | /skills on|off <name> [global|project]")
-	errMCPUsage    = errors.New("usage: /mcp | /mcp <server> | /mcp on|off|restart|approve <server> [global|project]")
+	// errKeysUsage never echoes the line: a mistyped "name" or an extra word may be the key itself.
+	errKeysUsage = errors.New("usage: /keys | /keys init (keys are written in the keys file, never typed here)")
+	errMCPUsage  = errors.New("usage: /mcp | /mcp <server> | /mcp on|off|restart|approve <server> [global|project]")
 )
 
 // ParseCommand parses one input line. Commands are case-sensitive and the line is
@@ -234,6 +245,21 @@ func parseSkills(f []string) (Command, error) {
 	return Command{}, errSkillsUsage
 }
 
+// parseAgents is /agents (the menu), /agents on|off <name> [global|project] or
+// /agents new <name> [global|project] or /agents edit <name>; "new" and "edit" travel in Text.
+func parseAgents(f []string) (Command, error) {
+	scope, ok := parseScope(f, 3)
+	switch {
+	case len(f) == 1:
+		return Command{Kind: KindAgents}, nil
+	case ok && (f[1] == "on" || f[1] == "off"):
+		return Command{Kind: KindAgents, Name: f[2], On: f[1] == "on", Scope: scope}, nil
+	case ok && (f[1] == "new" || f[1] == "edit"):
+		return Command{Kind: KindAgents, Name: f[2], Text: f[1], Scope: scope}, nil
+	}
+	return Command{}, errAgentsUsage
+}
+
 // parseMCP is /mcp (the menu), /mcp <server> (its tools) or /mcp on|off|restart|approve <server>
 // [global|project]; the action travels in Text.
 func parseMCP(f []string) (Command, error) {
@@ -247,6 +273,18 @@ func parseMCP(f []string) (Command, error) {
 		return Command{Kind: KindMCP, Name: f[2], Text: f[1], On: f[1] == "on", Scope: scope}, nil
 	}
 	return Command{}, errMCPUsage
+}
+
+// parseKeys is /keys (the menu) or /keys init (the template); the action travels in Text. Anything
+// else is refused without echoing the line (R-108).
+func parseKeys(f []string) (Command, error) {
+	switch {
+	case len(f) == 1:
+		return Command{Kind: KindKeys}, nil
+	case len(f) == 2 && f[1] == "init":
+		return Command{Kind: KindKeys, Text: "init"}, nil
+	}
+	return Command{}, errKeysUsage
 }
 
 func mcpAction(s string) bool { return s == "on" || s == "off" || s == "restart" || s == "approve" }

@@ -50,6 +50,9 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool) {
 		if text == "" {
 			return nil, true
 		}
+		if m.keyWarning(text) {
+			return nil, true
+		}
 		m.ta.Reset()
 		return m.submit(text), true
 	case "shift+enter", "ctrl+j":

@@ -78,6 +78,9 @@ type Set struct {
 	mu     sync.Mutex
 	blocks []Block // sorted by Order, then Name
 	env    Env     // what the env block describes
+
+	layers  []layer // the Profile layers, in or out of blocks (profile.go)
+	profile Profile // the Profile in force
 }
 
 // ---------------------------------------------------------------------------
@@ -117,8 +120,14 @@ func Load(globalDir, cwd string, env Env, extra ...Block) (set *Set, warnings []
 		b.Enabled = true
 		blocks = append(blocks, b)
 	}
+	layers := defaultLayers()
 	for _, name := range slices.Sorted(maps.Keys(overrides)) { // sorted: stable warnings
 		path := filepath.Join(globalDir, name+".md")
+		if k := layerIndex(layers, name); k >= 0 { // a Profile layer (R-119)
+			layers[k].Text = overrides[name]
+			warnings = append(warnings, fmt.Sprintf("prompt: block %q replaced by %s", name, path))
+			continue
+		}
 		i := slices.IndexFunc(blocks, func(b Block) bool { return b.Name == name })
 		if i < 0 || (blocks[i].Source != SourceBase && blocks[i].Source != SourceTool) {
 			warnings = append(warnings, fmt.Sprintf("prompt: skipped %s: not an NN-name.md file or a replaceable Block", path))
@@ -128,19 +137,24 @@ func Load(globalDir, cwd string, env Env, extra ...Block) (set *Set, warnings []
 		warnings = append(warnings, fmt.Sprintf("prompt: block %q replaced by %s", name, path))
 	}
 
+	sortBlocks(blocks)
+	return &Set{blocks: blocks, env: env, layers: layers, profile: Compact}, warnings, nil
+}
+
+// sortBlocks orders Blocks by Order, then Name.
+func sortBlocks(blocks []Block) {
 	sort.Slice(blocks, func(i, j int) bool {
 		if blocks[i].Order != blocks[j].Order {
 			return blocks[i].Order < blocks[j].Order
 		}
 		return blocks[i].Name < blocks[j].Name
 	})
-	return &Set{blocks: blocks, env: env}, warnings, nil
 }
 
 // checkUnique rejects a block whose name repeats another checked name or a
-// reserved fixed name. The fixed names count even when their block is absent.
+// reserved fixed name (including the Profile layer names). The fixed names count even when their block is absent.
 func checkUnique(blocks []Block) error {
-	seen := map[string]bool{nameBase: true, nameProject: true, nameEnv: true}
+	seen := map[string]bool{nameBase: true, nameProject: true, nameEnv: true, nameStandard: true, nameFull: true, nameSubagent: true}
 	for _, b := range blocks {
 		if seen[b.Name] {
 			return fmt.Errorf("prompt: duplicate block name %q", b.Name)
@@ -235,13 +249,20 @@ func (s *Set) SetModel(model string) {
 func (s *Set) SetText(name, text string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	found := false
+	if k := layerIndex(s.layers, name); k >= 0 { // a Profile layer keeps the text across profile switches
+		s.layers[k].Text, found = text, true
+	}
 	for i := range s.blocks {
 		if s.blocks[i].Name == name {
 			s.blocks[i].Text = text
-			return nil
+			found = true
 		}
 	}
-	return fmt.Errorf("prompt: unknown block %q", name)
+	if !found {
+		return fmt.Errorf("prompt: unknown block %q", name)
+	}
+	return nil
 }
 
 // SetEnabled switches the named block on or off. An unknown name is an error

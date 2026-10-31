@@ -164,6 +164,7 @@ func registerModelSteps(sc *godog.ScenarioContext, w *world) {
 		l, err := session.Load(w.sessions().path)
 		w.models().replayed = l.Model()
 		w.thinks().replayed = l.Thinking()
+		w.profiles().replayed = l.Profile()
 		return err
 	})
 

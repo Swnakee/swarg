@@ -17,6 +17,7 @@ import (
 	"golang.org/x/term"
 
 	"swarg/internal/agent"
+	"swarg/internal/agents"
 	"swarg/internal/config"
 	"swarg/internal/mcp"
 	"swarg/internal/prompt"
@@ -120,6 +121,10 @@ func run() (int, error) {
 	for _, w := range skWarnings {
 		fmt.Fprintf(os.Stderr, "swarg: %s\n", w)
 	}
+	ag, agWarnings := agents.Load(filepath.Join(dir, "agents"), cwd, cfg.Agents.Disabled)
+	for _, w := range agWarnings {
+		fmt.Fprintf(os.Stderr, "swarg: %s\n", w)
+	}
 	if sk.Len() > 0 { // no Skills: no skill Tool, no list (R-89)
 		all = append(all, sk.Tool())
 	}
@@ -170,8 +175,9 @@ func run() (int, error) {
 		}
 		p = cfg.Active()
 	}
-	if p.APIKeyEnv != "" && p.APIKey() == "" { // R-104: the key lives in the environment only
-		return 2, fmt.Errorf("provider %q: no key: set %s", cfg.Provider, p.APIKeyEnv)
+	keysNotices(os.Stderr)                     // R-106: warnings about the keys file and the old keys directory
+	if p.APIKeyEnv != "" && p.APIKey() == "" { // R-104, R-105: env var or the keys file
+		return 2, fmt.Errorf("provider %q: %s", cfg.Provider, p.NoKey())
 	}
 	srcs := newSources(&cfg, cwd, recent, approvals)
 	model := startModel(o.model, sv.model, p.Model) // R-30: a resumed session keeps its last model
@@ -186,7 +192,13 @@ func run() (int, error) {
 		return 2, err
 	}
 
+	if err := set.SetText(subagentsBlock, ag.Block()); err != nil { // the sub-agent policy of standard and full (R-123)
+		return 2, err
+	}
+	pf := &profiles{set: set, cfg: &cfg, sc: sc, record: sv.RecordProfile, current: srcs.Current}
+	pf.Restore(sv.profile, model) // R-116, R-118: the Session's own choice, else the config's
 	send, events := ui.NewInbox()
+	onEvent := onModel(set, srcs, send)
 	approver := ui.NewApprover(o.yes)
 	approver.SetAuto(cfg.Tools.AutoApprove)
 	client := srcs.client(cfg.Provider) // R-63: the idle limit of the provider
@@ -194,7 +206,22 @@ func run() (int, error) {
 	if sv.model != "" {
 		first = sv.model
 	}
+	runner := toolRunner{set: ts, mcp: mc, env: tools.Env{
+		Root:         root,
+		Dir:          cwd,
+		OS:           runtime.GOOS,
+		ShellTimeout: time.Duration(cfg.Tools.ShellTimeoutSec) * time.Second,
+		Jobs:         jobs,
+		// a background:true command that ends this fast is returned as a normal result
+		BackgroundGrace: time.Duration(cfg.Tools.BackgroundGraceSec) * time.Second,
+		// shell_output waits this long for a running job to end (fewer polls)
+		OutputWait: time.Duration(cfg.Tools.OutputWaitSec) * time.Second,
+		Web: tools.Web{SearxURL: cfg.Web.SearxURL, AllowPrivate: cfg.Web.AllowPrivate,
+			Timeout: time.Duration(cfg.Web.TimeoutSec) * time.Second},
+	}}
+	host := &agentHost{set: ag, cfg: &cfg, ps: set, srcs: srcs, runner: runner, profile: pf.Profile}
 	var a *agent.Agent
+	host.model = func() string { return a.Model() }
 	a = agent.New(agent.Deps{
 		Source:       cfg.Provider,
 		Provider:     client,
@@ -205,31 +232,21 @@ func run() (int, error) {
 		Extra:        p.ExtraBody,
 		ThinkExtra:   p.ThinkingBody(),
 		ThinkTokens:  p.ThinkingLimit(),
-		OnEvent:      onModel(set, srcs, send),
-		Tools: toolRunner{set: ts, mcp: mc, env: tools.Env{
-			Root:         root,
-			Dir:          cwd,
-			OS:           runtime.GOOS,
-			ShellTimeout: time.Duration(cfg.Tools.ShellTimeoutSec) * time.Second,
-			Jobs:         jobs,
-			// a background:true command that ends this fast is returned as a normal result
-			BackgroundGrace: time.Duration(cfg.Tools.BackgroundGraceSec) * time.Second,
-			// shell_output waits this long for a running job to end (fewer polls)
-			OutputWait: time.Duration(cfg.Tools.OutputWaitSec) * time.Second,
-			Web: tools.Web{SearxURL: cfg.Web.SearxURL, AllowPrivate: cfg.Web.AllowPrivate,
-				Timeout: time.Duration(cfg.Web.TimeoutSec) * time.Second},
-		}},
-		Approve:     approver.Approve,
-		Health:      func(ctx context.Context) error { return client.Health(ctx, a.Model()) },
-		MaxSteps:    cfg.Tools.MaxSteps,
-		Store:       sv.store,
-		Trace:       sv.trace,
-		AutoCompact: cfg.Context.AutoCompact,
-		LimitFor:    srcs.limitFor(cfg.Provider), // R-41: the ContextLimit follows the model (the Catalog's when known)
-		Tasks:       agent.TaskLimits{MaxDepth: cfg.Tasks.MaxDepth, MaxSteps: cfg.Tasks.MaxSteps, MaxPerTurn: cfg.Tasks.MaxPerTurn},
+		OnEvent:      func(ev agent.Event) { pf.OnEvent(ev); onEvent(ev) },
+		Tools:        runner,
+		Approve:      approver.Approve,
+		Health:       func(ctx context.Context) error { return client.Health(ctx, a.Model()) },
+		MaxSteps:     cfg.Tools.MaxSteps,
+		Store:        sv.store,
+		Trace:        sv.trace,
+		AutoCompact:  cfg.Context.AutoCompact,
+		WarnUSD:      cfg.Cost.WarnUSD,
+		LimitFor:     srcs.limitFor(cfg.Provider), // R-41: the ContextLimit follows the model (the Catalog's when known)
+		Tasks:        agent.TaskLimits{MaxDepth: cfg.Tasks.MaxDepth, MaxSteps: cfg.Tasks.MaxSteps, MaxPerTurn: cfg.Tasks.MaxPerTurn},
+		Agents:       host.Deps(),
 	})
 	if len(sv.history) > 0 {
-		if err := a.Load(sv.history, agent.WithMaxSeq(sv.maxSeq), agent.WithThinking(sv.thinking)); err != nil {
+		if err := a.Load(sv.history, agent.WithMaxSeq(sv.maxSeq), agent.WithThinking(sv.thinking), agent.WithSpend(sv.spend)); err != nil {
 			return 1, err
 		}
 	}
@@ -243,6 +260,7 @@ func run() (int, error) {
 		return 2, err
 	}
 	srcs.a = a
+	sv.onProfile = func(name string) { pf.Restore(name, a.Model()) } // /resume in the app
 	if err := srcs.Used(model); err != nil {
 		fmt.Fprintf(os.Stderr, "swarg: %s\n", err)
 	}
@@ -259,6 +277,8 @@ func run() (int, error) {
 		AutoApprove: cfg.Tools.AutoApprove,
 		Model:       model,
 		Think:       think,
+		Spend:       totalOf(sv.spend),
+		Cost:        srcs,
 		Project:     filepath.Base(cwd),
 		Limit:       srcs.limitFor(cfg.Provider)(first), // the initial value; EvMeter carries the live one
 	}
@@ -277,7 +297,10 @@ func run() (int, error) {
 		}
 	}
 	d.Scopes = sc
-	d.Config = &configView{sc: sc, cwd: cwd, cfg: &cfg, layers: &layers,
+	d.Agents = agentsView{set: ag, ps: set, sc: sc, cwd: cwd, dir: filepath.Join(dir, "agents")}
+	d.Prompt = pf
+	d.Keys = keysView{cfg: &cfg}
+	d.Config = &configView{sc: sc, cwd: cwd, cfg: &cfg, layers: &layers, profile: pf.Profile,
 		override: func(c *config.Config) { c.Override(o.providerOverride()) }}
 	d.History = sv.history // a resumed session pre-fills the list (the UI prints no saved hint; main does)
 	err = runUI(d)
@@ -294,6 +317,14 @@ func run() (int, error) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// totalOf is the sum of a per-model spend map.
+func totalOf(by map[string]float64) (t float64) {
+	for _, v := range by {
+		t += v
+	}
+	return t
+}
 
 // promptBlocks are the tool blocks of the SystemPrompt: the Tools' own and, when Tasks are on
 // (max_depth > 0), the `task` line of the agent's built-in Tool (Order after the last tool block);

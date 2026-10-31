@@ -18,10 +18,12 @@ var ErrStopped = errors.New("agent: stopped")
 
 // loadItem is a Load waiting in the queue.
 type loadItem struct {
-	history []chat.Message
-	maxSeq  int
-	model   string // WithModel; "" = keep the model
-	think   *bool  // WithThinking; nil = keep the thinking mode
+	history  []chat.Message
+	maxSeq   int
+	model    string // WithModel; "" = keep the model
+	think    *bool  // WithThinking; nil = keep the thinking mode
+	spend    map[string]float64
+	setSpend bool // WithSpend was given
 }
 
 // LoadOption tunes Load.
@@ -78,6 +80,10 @@ func (a *Agent) runLoad(ld *loadItem) {
 	if thinkChanged {
 		a.thinking = *ld.think
 	}
+	if ld.setSpend {
+		a.setSpendLocked(ld.spend)
+	}
+	total := a.spend.total()
 	ev, _ := a.meterEvent()
 	a.traceLocked("load", map[string]any{"messages": len(a.history), "repaired": repaired, "seq": a.seq, "model": a.model})
 	a.mu.Unlock()
@@ -87,6 +93,9 @@ func (a *Agent) runLoad(ld *loadItem) {
 	}
 	if thinkChanged {
 		a.emit(thinkEvent(*ld.think))
+	}
+	if ld.setSpend {
+		a.emit(Event{Kind: EvSpend, Spend: total})
 	}
 	a.sync()
 	a.mu.Lock()

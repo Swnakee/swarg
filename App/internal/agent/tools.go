@@ -139,6 +139,7 @@ func (a *Agent) prepare(r *turnResult) {
 	seen := map[string]bool{}
 	for _, c := range r.raw {
 		p := pendingCall{raw: c.Args}
+		a.mu.Lock() // agents prepare their calls at the same time as the Session's other loops
 		c.Args, p.bad = normalizeArgs(c.Args)
 		if r.finish == chat.FinishLength || r.looped { // the request was cut, so may be its calls
 			p.bad = errCut
@@ -147,6 +148,7 @@ func (a *Agent) prepare(r *turnResult) {
 			a.callSeq++
 			c.ID = fmt.Sprintf("call_%d", a.callSeq)
 		}
+		a.mu.Unlock()
 		seen[c.ID] = true
 		p.call = c
 		r.calls = append(r.calls, p)
@@ -197,8 +199,8 @@ func (a *Agent) runCalls(c *conversation, calls []pendingCall, g *repeatGuard) (
 	res := make([]result, len(calls))
 	for i := 0; i < len(calls); {
 		j := i + 1
-		if a.parallel(calls[i]) {
-			for j < len(calls) && a.parallel(calls[j]) {
+		if a.parallel(c, calls[i]) {
+			for j < len(calls) && a.parallel(c, calls[j]) {
 				j++
 			}
 		}
@@ -222,8 +224,11 @@ func (a *Agent) runCalls(c *conversation, calls []pendingCall, g *repeatGuard) (
 	return denied, stop
 }
 
-// parallel reports whether a call may share a batch: a known read-only tool, valid args.
-func (a *Agent) parallel(p pendingCall) bool {
+// parallel reports whether a call may share a batch: a known read-only tool or an `agent` call, valid args.
+func (a *Agent) parallel(c *conversation, p pendingCall) bool {
+	if p.call.Name == agentTool && c.depth == 0 && a.agentsOn() { // agents of one step run at once (R-122)
+		return p.bad == ""
+	}
 	known, readOnly, _ := a.deps.Tools.Kind(p.call.Name)
 	return p.bad == "" && known && readOnly
 }
@@ -262,6 +267,9 @@ func (a *Agent) labelOf(call chat.ToolCall) string {
 	if call.Name == taskTool && a.tasksOn() {
 		return taskLabel(call.Args)
 	}
+	if call.Name == agentTool && a.agentsOn() {
+		return agentLabel(call.Args)
+	}
 	return a.deps.Tools.Label(call)
 }
 
@@ -276,24 +284,37 @@ func (a *Agent) exec(c *conversation, p pendingCall, shown chat.ToolCall) (res r
 	}()
 	ctx := c.toolsCtx
 	known, readOnly, confirm := a.deps.Tools.Kind(p.call.Name)
-	task := p.call.Name == taskTool && a.tasksOn()
+	task := p.call.Name == taskTool && a.tasksOn() && c.agent == nil
+	agentCall := p.call.Name == agentTool && c.depth == 0 && a.agentsOn()
 	switch {
 	case p.bad != "":
 		return failed(errors.New(p.bad))
-	case !known && !task:
+	case !known && !task && !agentCall:
 		if sim := similarTools(p.call.Name, a.deps.Tools.Specs()); len(sim) > 0 { // R-90
 			return failed(fmt.Errorf("unknown tool %s; did you mean %s?", p.call.Name, strings.Join(sim, ", ")))
 		}
 		return failed(fmt.Errorf("unknown tool %s", p.call.Name))
+	case c.agent != nil && !c.agent.typ.Allows(p.call.Name, readOnly):
+		return failed(fmt.Errorf("tool %s is not available to this agent", p.call.Name))
 	case ctx.Err() != nil:
 		return note(resCancelled)
-	case (!readOnly || task) && c.depth == 0 && !p.synthetic && a.queued():
+	case (!readOnly || task || agentCall) && c.depth == 0 && !p.synthetic && a.queued():
 		return note(resSkipped) // R-10; the user's own /task goal is never skipped
 	case task:
 		return a.runTask(c, p)
+	case agentCall:
+		return a.runAgent(c, p, shown)
 	}
 	if confirm && a.deps.Approve != nil {
-		ap := a.deps.Approve(ctx, p.call)
+		var ap Approval
+		if c.agent != nil { // the prompts of parallel agents queue (R-125)
+			var got bool
+			if ap, got = a.agentApproval(ctx, p.call); !got {
+				return note(resCancelled)
+			}
+		} else {
+			ap = a.deps.Approve(ctx, p.call)
+		}
 		a.traceC(c, "approval", map[string]any{"id": p.call.ID, "name": p.call.Name, "allow": ap.Allow, "note": ap.Note})
 		switch {
 		case ctx.Err() != nil:
@@ -304,9 +325,21 @@ func (a *Agent) exec(c *conversation, p pendingCall, shown chat.ToolCall) (res r
 			return denial(resDenied + ". " + a.denyNote(c))
 		}
 	}
+	if st := a.stubber(); st != nil && !readOnly { // R-124: one writer per file
+		if path := st.Touched(p.call); path != "" {
+			who := "the session"
+			if c.id != "" {
+				who = "agent " + c.id
+			}
+			if holder, ok := a.paths.lock(path, who); !ok {
+				return failed(fmt.Errorf("%s is being written by %s right now; work on another file or try again later", path, holder))
+			}
+			defer a.paths.unlock(path)
+		}
+	}
 	sink := &progressSink{emit: func(chunk string) { a.emit(c.tag(Event{Kind: EvToolOutput, Call: shown, Text: chunk})) }}
 	hooks := ToolHooks{Progress: sink.send}
-	if !readOnly && a.deps.Tools.Detachable(p.call.Name) {
+	if !readOnly && c.agent == nil && a.deps.Tools.Detachable(p.call.Name) {
 		ch := make(chan struct{})
 		hooks.Detach = ch
 		a.setDetach(c, ch)

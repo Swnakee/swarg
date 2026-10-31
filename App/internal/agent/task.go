@@ -82,8 +82,18 @@ func (a *Agent) specs(c *conversation) []chat.ToolSpec {
 		return nil
 	}
 	specs := a.deps.Tools.Specs()
+	if c.agent != nil { // an agent gets its allowlist, no `task`, no `agent` (I-41)
+		out := slices.Clone(specs)
+		return slices.DeleteFunc(out, func(sp chat.ToolSpec) bool {
+			_, ro, _ := a.deps.Tools.Kind(sp.Name)
+			return !c.agent.typ.Allows(sp.Name, ro)
+		})
+	}
 	if a.tasksOn() && c.depth < a.deps.Tasks.MaxDepth {
-		return slices.Concat(specs, []chat.ToolSpec{taskSpec})
+		specs = slices.Concat(specs, []chat.ToolSpec{taskSpec})
+	}
+	if sp, ok := a.agentSpec(); ok && c.depth == 0 {
+		specs = slices.Concat(specs, []chat.ToolSpec{sp})
 	}
 	return specs
 }
@@ -246,7 +256,7 @@ func (a *Agent) taskResult(c *conversation, r *turnResult, msg chat.Message) res
 	if report != "" {
 		out += "\n" + report
 	}
-	out += fmt.Sprintf("\nsteps: %d/%d", r.steps, a.deps.Tasks.MaxSteps)
+	out += fmt.Sprintf("\nsteps: %d/%d", r.steps, a.stepLimit(c))
 	res := result{output: out, brief: line, denied: r.status == statusDenied}
 	if strings.HasPrefix(r.status, statusFailed) {
 		res.err = errors.New(strings.TrimPrefix(r.status, statusFailed))
@@ -276,7 +286,7 @@ func (a *Agent) changedFiles(c *conversation) (out []string) {
 			continue
 		}
 		switch {
-		case call.Name == taskTool:
+		case call.Name == taskTool || call.Name == agentTool:
 			if sub := filesRe.FindStringSubmatch(m.Content); sub != nil {
 				for _, p := range strings.Split(sub[1], ", ") {
 					add(p)

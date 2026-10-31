@@ -62,10 +62,12 @@ fi
 # Health check: a 1-token POST (down or wedged = stop and report, no retry)
 # ---------------------------------------------------------------------------
 
-if ! curl -s -m 5 -o /dev/null "$MODEL_HOST_URL/v1/models"; then
+if [ "${SWARG_NO_LOCAL:-0}" = "1" ]; then
+    say "cloud run (SWARG_NO_LOCAL=1): no local server check; model $MODEL; ${#TASKS[@]} task(s)"
+elif ! curl -s -m 5 -o /dev/null "$MODEL_HOST_URL/v1/models"; then
     say "model server is down (nothing on $MODEL_HOST_URL); start it: llm start qwen"
     exit 3
-fi
+else
 BODY=$(printf '{"model":"%s","messages":[{"role":"user","content":"hi"}],"max_tokens":1}' "$MODEL")
 CODE=$(curl -s -m 120 -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
     -d "$BODY" "$MODEL_HOST_URL/v1/chat/completions")
@@ -74,6 +76,7 @@ if [ "$CODE" != "200" ]; then
     exit 3
 fi
 say "model ok: $MODEL; ${#TASKS[@]} task(s)"
+fi
 
 # ---------------------------------------------------------------------------
 # Run

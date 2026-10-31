@@ -26,7 +26,10 @@ type conversation struct {
 	lastReqSeq  int          // highest Seq the previous request carried (trace of added messages)
 	depth       int          // 0 = the Session, 1 = a Task started by it, ...
 	id          string       // "" for the Session, "t1", "t2", ... for Tasks
-	goal        string       // the Task's goal; "" for the Session
+	goal        string       // the Task's or agent's goal; "" for the Session
+	agent       *agentRun    // non-nil for a sub-agent: its Source, type and call (id "a1", ...)
+	maxSteps    int          // Step limit of an agent; 0 = the Task's or the Turn's
+	step        int          // the Step the loop is on (progress lines of an agent)
 }
 
 // tag marks an event with the conversation it comes from (the Session leaves Task empty).

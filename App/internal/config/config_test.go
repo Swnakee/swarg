@@ -232,6 +232,10 @@ func TestValidate(t *testing.T) {
 		{"auto_compact 95", func(c *Config) { c.Context.AutoCompact = 95 }, false},
 		{"auto_compact 96", func(c *Config) { c.Context.AutoCompact = 96 }, true},
 		{"auto_compact negative", func(c *Config) { c.Context.AutoCompact = -1 }, true},
+		{"warn_usd off", func(c *Config) { c.Cost.WarnUSD = 0 }, false},
+		{"warn_usd 2.5", func(c *Config) { c.Cost.WarnUSD = 2.5 }, false},
+		{"warn_usd negative", func(c *Config) { c.Cost.WarnUSD = -1 }, true},
+		{"warn_usd absurd", func(c *Config) { c.Cost.WarnUSD = 1e9 }, true},
 		{"https base_url", func(c *Config) { setBaseURL(c, "https://example.com/v1") }, false},
 	}
 	for _, tt := range tests {

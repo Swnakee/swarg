@@ -55,7 +55,8 @@ type Opened struct {
 	History []chat.Message
 	MaxSeq  int
 	Model   string
-	Think   bool // the thinking mode at the end of the session (R-60)
+	Think   bool               // the thinking mode at the end of the session (R-60)
+	Spend   map[string]float64 // the cost so far per model (R-111)
 	Title   string
 }
 
@@ -139,6 +140,22 @@ type SkillRow struct {
 	Enabled                   bool
 }
 
+// AgentsAPI is what /agents needs; main adapts the agents package. SetEnabled applies for this run and persists `agents.disabled` into the scope's config file ("" = this run only). New writes a template agent-type file for the scope and returns its path. The default scope is global (R-128).
+type AgentsAPI interface {
+	List() []AgentRow
+	SetEnabled(name string, on bool, scope string) error
+	New(name, scope string) (path string, err error)
+	// Edit returns the file to edit for a type: its own file, or, for a built-in, a copy of its
+	// definition written to the global agents folder (created true; an existing file is kept).
+	Edit(name string) (path string, created bool, err error)
+}
+
+// AgentRow is one sub-agent type as the UI shows it. Source: builtin | global | project.
+type AgentRow struct {
+	Name, Description, Source, Path string
+	Enabled                         bool
+}
+
 // MCPAPI is what /mcp needs; main adapts the mcp client. SetEnabled applies for this run and
 // persists `mcp.servers.<name>.disabled` into the scope's file ("" = this run only); Approve
 // stores the user's approval of a project server and starts it (R-97).
@@ -189,6 +206,44 @@ type ConfigAPI interface {
 	Set(scope, key string, value any) error
 }
 
+// KeyRow is one API key as /keys lists it: Users say who refers to it ("provider openrouter", "mcp
+// web header Authorization"), State is "set (env)", "set (env, wins)", "set (keys.env)",
+// "set (old keys dir)" or "missing", Masked is the value hint or "".
+type KeyRow struct {
+	Name, State, Masked string
+	Users               []string
+}
+
+// KeysAPI is what /keys needs (R-106, R-110); main adapts the key store. It only shows: keys are
+// written in the keys file, never in the UI. Keys re-reads the file on every call. File is the
+// path shown to the user, Warnings the current problems of the file (never a key), Init writes the
+// template when there is no file (error otherwise) and returns the path. Deps.Keys may be nil: the
+// command then says so.
+type KeysAPI interface {
+	Keys() []KeyRow
+	File() string
+	Warnings() []string
+	Init() (string, error)
+}
+
+// PromptRow is one prompt profile as /prompt lists it: Tokens is the estimated size of its
+// instruction text, Active marks the one in force.
+type PromptRow struct {
+	Name, Note string
+	Tokens     int
+	Active     bool
+}
+
+// PromptAPI is what /prompt needs (R-117); main adapts the prompt Set, the config and the
+// SessionFile. Choose applies the profile from the next request and records it in the SessionFile
+// (an explicit choice: the config stops deciding for this Session); a scope ("global" or "project")
+// also writes `prompt.profile` there, and a failed write is a NotSavedError after the profile was
+// applied. Deps.Prompt may be nil: the command then says so.
+type PromptAPI interface {
+	Profiles() []PromptRow
+	Choose(name, scope string) error
+}
+
 // MCPToolRow is one tool of /mcp <server>.
 type MCPToolRow struct {
 	Name, Description string
@@ -210,11 +265,16 @@ type Deps struct {
 	Models      ModelsAPI      // optional: the model list of /model
 	Servers     ServersAPI     // optional: /server (nil = the command says so)
 	Skills      SkillsAPI      // optional: /skills, /skill and /<skill> (nil = no Skills loaded)
+	Agents      AgentsAPI      // optional: /agents (nil = the command says so)
 	MCP         MCPAPI         // optional: /mcp (nil = no MCP servers configured)
 	Scopes      ScopesAPI      // optional: the save scopes of /skills, /mcp and /config
 	Config      ConfigAPI      // optional: /config (nil = the command says so)
+	Cost        CostAPI        // optional: the key usage of /cost (nil = the Session spend only)
+	Prompt      PromptAPI      // optional: /prompt and the prompt profile row of /config (nil = the command says so)
+	Keys        KeysAPI        // optional: /keys and the Keys row of /config (nil = the command says so)
 	History     []chat.Message // optional: the list is pre-filled from it at startup (a resumed session)
 	SavedHint   string         // optional: main prints it after Run returns (e.g. "session saved: swarg --continue"); the UI prints nothing
+	Spend       float64        // the Session spend in USD at start (a resumed session); EvSpend events update the panel
 	Think       bool           // the thinking mode at start; EvThinking events update the Bottom panel
 	Model       string         // the Model choice at start; EvModel events update the Bottom panel
 	Provider    string         // the Source name at start ("" = not shown); EvProvider events update the panel

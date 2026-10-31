@@ -51,12 +51,11 @@ func (m *model) panelItems() []panelItem {
 	if m.providerName != "" {
 		items = append(items, panelItem{text: m.providerName + "/", id: spotServer, glue: true})
 	}
-	items = append(items, []panelItem{
-		{text: m.modelName, id: spotModel},
-		{text: agent.FormatMeter(m.used, m.limit, m.est)},
-		{text: m.speedText()},
-		{text: auto},
-	}...)
+	items = append(items, panelItem{text: m.modelName, id: spotModel}, panelItem{text: agent.FormatMeter(m.used, m.limit, m.est)})
+	if m.spend > 0 { // next to the meter (R-112)
+		items = append(items, panelItem{text: agent.FormatUSD(m.spend)})
+	}
+	items = append(items, panelItem{text: m.speedText()}, panelItem{text: auto})
 	if m.thinking {
 		items = append(items, panelItem{text: thinkText})
 	}

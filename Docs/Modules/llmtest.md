@@ -9,7 +9,8 @@ API:
 - `Reply.Finish` - finish_reason. Default: `"tool_calls"` if `ToolCalls` is non-empty, else `"stop"`. An explicit value always wins (e.g. `"length"`).
 - `Reply.ToolCalls []chat.ToolCall` - sent after the chunks, one chunk per call (mlx format: whole `arguments`, `index` = position, `id`, `type`, `name` in the same chunk).
 - `Reply.SplitArgs` - each call is sent in 3 chunks (OpenRouter style): the first has id, type, name and a third of `arguments`; the next two have only `index` and the next pieces of `function.arguments`.
-- `Reply.Usage *chat.Usage` - final usage chunk, written only if non-nil.
+- `Reply.Usage *chat.Usage` - final usage chunk, written only if non-nil; a positive `Usage.Cost` is written as `usage.cost` (T13).
+- `Server.Key *Key` (T13) - the answer of `GET /v1/key` in the OpenRouter shape (`data.{label, limit, limit_remaining, usage, usage_daily, usage_weekly, usage_monthly}`); `Key{Label, Limit, Remaining *float64, Usage, Daily, Weekly, Monthly, Status, Body}`, nil `Limit`/`Remaining` are `null`, non-zero `Status` answers that error with `Body`; nil `Key` = 404. Set before the first call.
 - `Reply.Status` - non-zero and not 200: error response with body `fake error`, or `Reply.Body` when set; `Reply.RetryAfter` (seconds) adds a `Retry-After` header (T11: the fake OpenRouter's 429/401/402/404).
 - `Reply.Reasoning` - chunks streamed as `delta.reasoning_content` frames before the text `Chunks`.
 - `Reply.Gate` + `GateAfter` - send `Chunks[:GateAfter]`, then block until the gate is closed or the request is cancelled.

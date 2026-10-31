@@ -17,6 +17,13 @@
 # never kill a client mid-request, so the runner waits for the container to
 # finish instead of killing it; health check with a 1-token POST first.
 #
+# Egress (optional, default none): SWARG_EGRESS=host[,host2] starts an allow-list proxy container
+# (egress/proxy.py: HTTP CONNECT to <host>:443 only, the rest refused and logged to egress.log);
+# the run container gets HTTPS_PROXY pointing at it. SWARG_KEY_ENV=NAME passes the host env
+# variable NAME into the run container at run time (never written to a file); the value is
+# scrubbed from the collected results. SWARG_NO_LOCAL=1 skips the local model server entirely
+# (cloud-only run, e.g. SWARG_EGRESS=openrouter.ai).
+#
 # Exit codes: 0 pass, 1 run failed, 2 usage, 3 model server down or wedged,
 # 4 container runtime not available, 5 another run in progress.
 # ---------------------------------------------------------------------------
@@ -40,6 +47,10 @@ NET="swarg-e2e-net"
 PROXY="swarg-e2e-proxy"
 WEB="swarg-e2e-web"
 WEB_DIR="${SWARG_WEB_DIR:-}"   # fake web for web-* evals: a dir with server.py and site/<host>/
+EGRESS_PROXY="swarg-e2e-egress"
+EGRESS="${SWARG_EGRESS:-}"      # comma-separated hosts the run container may reach over HTTPS
+KEY_ENV="${SWARG_KEY_ENV:-}"    # name of a host env var holding an API key to pass in
+NO_LOCAL="${SWARG_NO_LOCAL:-0}"
 MCP="swarg-e2e-mcp"
 MCP_DIR="${SWARG_MCP_DIR:-}"   # fake HTTP MCP server for mcp-http-* evals: a dir with mcp_http.py and mcp_demo.py
 MCP_TOKEN="t9-eval-token"      # the bearer the fake needs; the agent gets it as MCP_TOKEN (never in a config file)
@@ -58,6 +69,15 @@ FIXTURE_DIR="$HERE/fixtures/$FIXTURE"
 
 say() { printf '[e2e] %s\n' "$*"; }
 
+# Egress / key validation (before anything is started)
+if [ -n "$EGRESS" ]; then
+    case "$EGRESS" in *[!a-zA-Z0-9.,-]*|,*|*,|*,,*|.*|-*) say "bad SWARG_EGRESS (hostnames separated by commas): $EGRESS"; exit 2 ;; esac
+fi
+if [ -n "$KEY_ENV" ]; then
+    case "$KEY_ENV" in *[!A-Za-z0-9_]*|[0-9]*) say "bad SWARG_KEY_ENV (an env variable name): $KEY_ENV"; exit 2 ;; esac
+    [ -n "${!KEY_ENV:-}" ] || { say "SWARG_KEY_ENV=$KEY_ENV but that variable is empty on the host"; exit 2; }
+fi
+
 # ---------------------------------------------------------------------------
 # Lock: one run at a time (the model server is a single lane)
 # ---------------------------------------------------------------------------
@@ -72,6 +92,7 @@ BUILD=""
 cleanup() {
     if [ -n "$CID" ]; then docker rm -f -v "$CID" >/dev/null 2>&1; fi
     docker rm -f "$PROXY" >/dev/null 2>&1
+    [ -n "$EGRESS" ] && docker rm -f -v "$EGRESS_PROXY" >/dev/null 2>&1
     [ -n "$WEB_DIR" ] && docker rm -f -v "$WEB" >/dev/null 2>&1
     [ -n "$MCP_DIR" ] && docker rm -f -v "$MCP" >/dev/null 2>&1
     docker network rm "$NET" >/dev/null 2>&1
@@ -99,6 +120,8 @@ if ! docker info >/dev/null 2>&1; then
     exit 4
 fi
 
+MODEL_ID="${SWARG_MODEL:-mlx-community/Qwen3.5-2B-4bit}"
+if [ "$NO_LOCAL" != 1 ]; then
 if ! curl -s -m 5 -o /dev/null "$MODEL_HOST_URL/v1/models"; then
     say "model server is down (nothing on $MODEL_HOST_URL); start it: llm start qwen"
     exit 3
@@ -115,6 +138,7 @@ if [ "$CODE" != "200" ]; then
     exit 3
 fi
 say "model ok: $MODEL_ID"
+fi
 
 # ---------------------------------------------------------------------------
 # Build: linux binary + image
@@ -134,9 +158,24 @@ docker build -q -t "$IMAGE" "$BUILD" >/dev/null || { say "image build failed"; e
 docker rm -f "$PROXY" >/dev/null 2>&1
 docker network rm "$NET" >/dev/null 2>&1
 docker network create --internal "$NET" >/dev/null || exit 1
+if [ "$NO_LOCAL" != 1 ]; then
 docker run -d --name "$PROXY" --network bridge --memory 64m --cpus 0.25 \
     alpine/socat "TCP-LISTEN:8080,fork,reuseaddr" "TCP:$MODEL_HOST:$MODEL_PORT" >/dev/null || exit 1
 docker network connect --alias model "$NET" "$PROXY" || exit 1
+fi
+
+# Egress proxy (SWARG_EGRESS): on bridge (internet) and on the internal network as "egress".
+# The run container reaches the internet only through it, and only for CONNECT host:443.
+if [ -n "$EGRESS" ]; then
+    docker rm -f -v "$EGRESS_PROXY" >/dev/null 2>&1
+    docker create --name "$EGRESS_PROXY" --network bridge --cpus 0.25 --memory 64m --pids-limit 64 \
+        --read-only --cap-drop ALL --security-opt no-new-privileges -v /srv \
+        "$IMAGE" python3 /srv/proxy.py 3128 "$EGRESS" >/dev/null || exit 1
+    docker cp "$HERE/egress/proxy.py" "$EGRESS_PROXY:/srv/" >/dev/null || exit 1
+    docker start "$EGRESS_PROXY" >/dev/null || exit 1
+    docker network connect --alias egress "$NET" "$EGRESS_PROXY" || exit 1
+    say "egress allowed to: $EGRESS (https only)"
+fi
 
 # Fake web (SWARG_WEB_DIR): one more container on the internal network, answering for
 # search.test and every host folder under site/; no internet involved.
@@ -173,6 +212,12 @@ fi
 # SWARG_ASK=1 keeps the confirmations (e.g. the denial e2e run).
 CFG_ENV=(-e SWARG_ASK="${SWARG_ASK:-0}")
 [ -n "$MCP_DIR" ] && CFG_ENV+=(-e MCP_TOKEN="$MCP_TOKEN")
+if [ -n "$EGRESS" ]; then
+    P="http://egress:3128"; NP="model,egress,mcp.test,search.test,localhost,127.0.0.1"
+    CFG_ENV+=(-e HTTPS_PROXY="$P" -e https_proxy="$P" -e NO_PROXY="$NP" -e no_proxy="$NP")
+fi
+# "-e NAME" without a value copies it from this process's environment: the key never appears in a command line.
+[ -n "$KEY_ENV" ] && CFG_ENV+=(-e "$KEY_ENV")
 
 # A live session gets the host terminal's colour support: without TERM/COLORTERM swarg
 # falls back to 16 colours. The image has no terminfo for xterm-ghostty, so TERM is the
@@ -186,11 +231,14 @@ fi
 OUT="$ROOT/Export/e2e/$(date +%Y%m%d-%H%M%S)-$FIXTURE"
 mkdir -p "$OUT"
 
+BASE_ENV=()
+[ "$NO_LOCAL" != 1 ] && BASE_ENV=(-e SWARG_BASE_URL=http://model:8080/v1 -e SWARG_MODEL="$MODEL_ID")
+
 CID=$(docker create ${TTY[@]+"${TTY[@]}"} --network "$NET" \
     --cpus "$CPUS" --memory "$MEMORY" --pids-limit 256 \
     --read-only --tmpfs /tmp:rw,size=64m --tmpfs /home/agent:rw,size=64m,uid=1000,gid=1000 -v /work \
     --cap-drop ALL --security-opt no-new-privileges \
-    -e SWARG_BASE_URL=http://model:8080/v1 -e SWARG_MODEL="$MODEL_ID" \
+    ${BASE_ENV[@]+"${BASE_ENV[@]}"} \
     ${CFG_ENV[@]+"${CFG_ENV[@]}"} ${TERM_ENV[@]+"${TERM_ENV[@]}"} \
     "$IMAGE" entry.sh timeout "$RUN_TIMEOUT" "${CMD[@]}") || exit 1
 docker cp "$FIXTURE_DIR/." "$CID:/work/" >/dev/null || exit 1
@@ -218,6 +266,14 @@ STATUS=$(docker wait "$CID")
 # ---------------------------------------------------------------------------
 
 docker cp "$CID:/work/." "$OUT/work/" >/dev/null
+if [ -n "$EGRESS" ]; then
+    docker logs "$EGRESS_PROXY" > "$OUT/egress.log" 2>&1
+    say "egress log: $(grep -c '^ALLOW' "$OUT/egress.log") allowed, $(grep -c '^DENY' "$OUT/egress.log") denied"
+fi
+# The API key must not survive in any result file: replace its value with ***.
+if [ -n "$KEY_ENV" ]; then
+    KEY_VALUE="${!KEY_ENV}" python3 "$HERE/egress/scrub.py" "$OUT" || say "WARNING: key scrub failed, do not keep $OUT"
+fi
 ( cd "$OUT" && diff -ruN "$FIXTURE_DIR" work > diff.patch )
 say "exit=$STATUS, results: $OUT"
 [ "$STATUS" = "0" ] && exit 0 || exit 1

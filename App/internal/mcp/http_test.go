@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -108,6 +109,59 @@ func TestHTTP_HeadersExpandEnv(t *testing.T) {
 	}
 	if _, err := run(t, c, "{}"); err != nil || fake.Headers.Get("X-Team") != "blue" {
 		t.Fatalf("run %v headers %v", err, fake.Headers)
+	}
+}
+
+// isolateConfigDir points config.Dir() (and so the key store) into a temp dir.
+func isolateConfigDir(t *testing.T) {
+	t.Helper()
+	d := t.TempDir()
+	t.Setenv("HOME", d)
+	t.Setenv("XDG_CONFIG_HOME", d)
+	t.Setenv("AppData", d)
+}
+
+// writeKeysFile writes the user's (isolated) keys file, private.
+func writeKeysFile(t *testing.T, body string) {
+	t.Helper()
+	f := config.UserKeys().File
+	if err := os.MkdirAll(filepath.Dir(f), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(f, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// K4: an unset variable falls back to the keys file; a set one wins; a restart re-reads it.
+func TestHTTP_HeaderFromKeysFileEnvWinsAndRestartRereads(t *testing.T) {
+	isolateConfigDir(t)
+	t.Setenv("T12_MCP_TOK", "")
+	writeKeysFile(t, "T12_MCP_TOK=from-file\n")
+	fake := mcptest.NewHTTP(echoTool("a", false))
+	fake.Token = "from-file"
+	cfg := config.MCPServer{URL: serve(t, fake), Headers: map[string]string{"Authorization": "Bearer ${T12_MCP_TOK}"}}
+	c, warnings := startURL(t, cfg)
+	if len(warnings) != 0 {
+		t.Fatalf("file key: warnings %q", warnings)
+	}
+	if _, err := run(t, c, "{}"); err != nil {
+		t.Fatalf("run with the file key: %v", err)
+	}
+	// the key is edited in the keys file; Restart dials again and reads the new value
+	fake.Token = "rotated"
+	writeKeysFile(t, "T12_MCP_TOK=rotated\n")
+	if err := c.Restart(t.Context(), "docs"); err != nil {
+		t.Fatalf("restart with the rotated key: %v", err)
+	}
+	// the environment wins over the file
+	t.Setenv("T12_MCP_TOK", "from-env")
+	fake.Token = "from-env"
+	if err := c.Restart(t.Context(), "docs"); err != nil {
+		t.Fatalf("restart with the env key: %v", err)
 	}
 }
 

@@ -66,6 +66,7 @@ type turnResult struct {
 	tokens    int             // completion tokens of the Step (usage), 0 when not reported
 	sent      int             // estimated prompt tokens of the request (R-65)
 	limit     int             // max_tokens of the request, named in the undelivered nudge (R-67)
+	model     string          // the model id of the request, for its cost (R-111)
 }
 
 // runTurn runs one Turn of the Session: steps until the model answers without tool calls, the
@@ -120,8 +121,8 @@ func (a *Agent) runLoop(c *conversation, repeats *repeatGuard) (*turnResult, cha
 	var msg chat.Message
 	denials, nudged := 0, false
 	maxSteps := a.deps.MaxSteps
-	if c.depth > 0 {
-		maxSteps = a.deps.Tasks.MaxSteps
+	if c.depth > 0 || c.maxSteps > 0 {
+		maxSteps = a.stepLimit(c)
 	}
 	for step := 1; ; step++ {
 		a.emergencyBatch(c)
@@ -221,9 +222,10 @@ func (a *Agent) stream(c *conversation, step int) *turnResult {
 	reqCtx, reqCancel := context.WithCancel(c.ctx)
 	defer reqCancel()
 	a.mu.Lock()
-	c.meter.limit = a.limitFor(a.model)
+	c.meter.limit, c.step = a.limitOf(c), step
 	req := a.request(c)
-	prov := a.src.Provider
+	src, _ := a.srcOf(c)
+	prov := src.Provider
 	a.traceRequestLocked(c, step, req)
 	c.reqCancel = reqCancel
 	if a.aborted {
@@ -232,7 +234,7 @@ func (a *Agent) stream(c *conversation, step int) *turnResult {
 	a.mu.Unlock()
 	a.sync()
 
-	r := &turnResult{finish: chat.FinishError, err: errStreamClosed, sent: estimateRequest(req).Total(), limit: req.MaxTokens}
+	r := &turnResult{finish: chat.FinishError, err: errStreamClosed, sent: estimateRequest(req).Total(), limit: req.MaxTokens, model: req.Model}
 	r.clock.start = a.deps.Now()
 	if ch, err := prov.Stream(reqCtx, req); err != nil {
 		r.err = err
@@ -267,8 +269,9 @@ func (a *Agent) request(c *conversation) chat.Request {
 		}
 		msgs = append(msgs, m)
 	}
-	req := chat.Request{Model: a.model, Messages: msgs, MaxTokens: a.src.MaxTokens, Extra: a.src.Extra, Tools: a.specs(c)}
-	if a.thinking { // R-60
+	src, model := a.srcOf(c)
+	req := chat.Request{Model: model, Messages: msgs, MaxTokens: src.MaxTokens, Extra: src.Extra, Tools: a.specs(c)}
+	if a.thinking && c.agent == nil { // R-60
 		req.Extra = mergeExtra(a.src.Extra, a.src.ThinkExtra)
 		if a.src.ThinkTokens > req.MaxTokens { // never shrink a larger configured limit
 			req.MaxTokens = a.src.ThinkTokens
@@ -339,6 +342,7 @@ func (a *Agent) handle(c *conversation, r *turnResult, ev chat.StreamEvent) bool
 			a.emit(c.tag(Event{Kind: EvWarning, Text: cut}))
 		}
 		r.tokens = ev.Usage.CompletionTokens
+		a.addSpend(r.model, ev.Usage.Cost)
 		a.traceC(c, "usage", map[string]any{"prompt": ev.Usage.PromptTokens, "completion": ev.Usage.CompletionTokens, "cached": ev.Usage.CachedTokens})
 	case chat.EventDone:
 		r.finish, r.err, r.raw = ev.Finish, ev.Err, ev.ToolCalls
@@ -436,7 +440,7 @@ func (a *Agent) inject() {
 // emergencyBatch runs the once-per-Turn emergency stub batch of c when the next request is too big.
 func (a *Agent) emergencyBatch(c *conversation) {
 	a.mu.Lock()
-	c.meter.limit = a.limitFor(a.model) // a /model switch mid-Task reaches the Task's next Step (I-13)
+	c.meter.limit = a.limitOf(c) // a /model switch mid-Task reaches the Task's next Step (I-13)
 	changed := a.stubEmergencyLocked(c)
 	var ev Event
 	if changed {

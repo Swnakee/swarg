@@ -39,3 +39,7 @@ Gotchas:
 - The HTTP transport reads the protocol version from any response whose `result.protocolVersion` is set and the Session id from any `Mcp-Session-Id` response header: no bookkeeping of the initialize id.
 - `http://<host>` with a host name costs a DNS lookup at start (the R-94 check); `https://` skips it. In the sandbox `mcp.test` resolves to the container's private address, so plain http is fine there.
 - A `url` with a different port on the same host counts as another host for the redirect check (`req.URL.Host` includes the port).
+
+## Keys in `headers` and `env` (T12, R-107)
+
+`dialHTTP` (header values) and `dialStdio` (`env` values) expand `$VAR` / `${VAR}` with `config.UserKeys().Expand`: the environment variable wins, else the Keys file `<config dir>/keys.env` (then the Old Key directory `<config dir>/keys/VAR`), else "". The expansion runs at every dial, so `/mcp restart` picks up a key edited in the Keys file. The values stay inside the transport (I-32, I-37). Tests isolate the config dir (`isolateConfigDir` in `http_test.go`).

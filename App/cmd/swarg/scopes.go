@@ -53,6 +53,7 @@ type configView struct {
 	cwd      string
 	cfg      *config.Config
 	layers   *config.Layers
+	profile  func() string        // the prompt profile in force (the /config row shows it)
 	override func(*config.Config) // the command-line overrides (--model, --base-url), re-applied after a reload
 }
 
@@ -68,6 +69,9 @@ func (v *configView) Settings() []ui.Setting {
 		{Key: "session.save", Label: "save sessions", Kind: "bool", Value: v.cfg.Session.Save},
 		{Key: "context.auto_compact", Label: "auto-compact at %", Kind: "int", Value: v.cfg.Context.AutoCompact, Min: 50, Max: 95, Step: 5},
 		{Key: "tasks.max_depth", Label: "task nesting depth", Kind: "int", Value: v.cfg.Tasks.MaxDepth, Min: 0, Max: 8, Step: 1},
+	}
+	if v.profile != nil {
+		rows = append(rows, ui.Setting{Key: "prompt.profile", Label: "prompt profile", Kind: "string", Value: v.profile(), Live: "profile"})
 	}
 	for i := range rows {
 		rows[i].Scope = "global"

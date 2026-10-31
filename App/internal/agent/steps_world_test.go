@@ -81,6 +81,7 @@ type world struct {
 	trc       *traceWorld   // trace.feature
 	cmp       *compactWorld // compaction.feature
 	thk       *thinkWorld   // thinking.feature
+	prf       *profileWorld // prompt_profiles.feature
 	mdl       *modelWorld   // model_choice.feature, generation_speed.feature
 	clearErr  error
 	switchErr error
@@ -88,6 +89,9 @@ type world struct {
 	skl    *skillsWorld   // skills.feature
 	mc     *mcpWorld      // mcp.feature
 	cf     *configWorld   // config.feature
+	kw     *keysWorld     // keys.feature
+	spd    *spendWorld    // spend.feature
+	sag    *subAgentWorld // sub_agents.feature
 	prv    *providerWorld // providers.feature
 	listed []string       // providers.feature: the first Source's model list
 
@@ -191,6 +195,8 @@ func (w *world) begin() error {
 	w.plugCompaction(&deps)
 	w.plugModel(&deps)
 	w.plugThink(&deps)
+	w.plugSpend(&deps)
+	w.plugAgents(&deps)
 	if tr, err := w.toolRunner(); err != nil {
 		return err
 	} else if tr != nil {

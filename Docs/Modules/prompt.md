@@ -14,6 +14,9 @@ API:
 - `(*Set).List() []BlockInfo` - `{Name, Source, Enabled, Tokens}` per block, in build order.
 - Token sizes use `chat.EstimateTokens` (the only estimator in the project).
 
+- `(*Set).BuildAgent(p Profile, model, body string, tool func(name string) bool) string` (R-123) - the SystemPrompt of a sub-agent: base and the layers of `p` (never `subagents`), the Tool Blocks `tool-<name>` whose name `tool` allows (the `skills`, `mcp` and `tool-task` Blocks never), the type's `body` just before the project file, then project and env with `model`. Switched-off Blocks stay out, an unknown profile builds as compact; the Set is not changed.
+- Prompt Profiles (`profile.go`, R-115, R-119, I-40): `Profile` = `Compact|Standard|Full`, `Profiles()`, `ParseProfile(s)` (error lists the known names). `(*Set).SetProfile(p)` puts the layers of the Profile into the Set and takes the others out (so `List` and `Build` show exactly what is sent; `Load` starts in `Compact` with the same Blocks as before); `Profile()`; `ProfileTokens(p)` = estimated size of base + layers (for `/prompt`). Layers (embedded `standard.md`, `full.md`, plus the empty `subagents`): `profile-standard` (Order 50), `profile-full` (Order 60), `subagents` (Order 70, standard and full only; T13 part C fills it with `SetText`, which also survives profile switches). Override files `profile-standard.md`, `profile-full.md`, `subagents.md` replace a layer's text (warning at load whatever the Profile); the three names are reserved for global `NN-name` Blocks. A layer switched off with `SetEnabled` is on again after a Profile change.
+
 Blocks:
 - `base` (Order 0) - embedded `base.md`. It carries rule C1: "The user already sees tool output. Do not repeat it; summarize in 1-2 sentences." (`TestBase_RuleC1_NoRepeatingToolOutput`). Fixed prompt budget (base + the tool blocks + env + tool schemas of `tools.All()`) is <= 1200 tokens (1123 after the web tools), guarded by `tools.TestBlocks_TokenCeiling` (tools imports prompt, so the test lives there). The agent's `task` Tool adds its spec and the `tool-task` block (`agent.TaskBlock`, Order 599, added by main when `tasks.max_depth > 0`): under 110 tokens, guarded by `agent.TestTask_PromptCost`, so the whole fixed prompt with Tasks on is ~1230 tokens (under 4% of the 32k default of the Qwen3.5 models).
 - `NN-name` (Order NN) - `NN-name.md` files in `globalDir`; a missing dir means none.
@@ -30,6 +33,7 @@ Invariants:
 - `Set` is safe for concurrent use (one mutex).
 
 Gotchas:
+- The layer texts are plain instructions for swarg's real tools; they have no JSON tool-call examples (notes 10, 11: examples act as templates) and no HTML comments (`TestLayers_NoInternalNamesOrToolJSON`). Fixed prompt with the tool schemas: compact 1198, standard ~3.5k, full ~8.7k tokens (`tools.TestProfiles_TokenBudget`, ceilings 1200 / 5000 / 12000).
 - `Build` trims trailing whitespace of each text and CRLF is normalized to LF on read.
 - `Tokens` counts the text as `Build` emits it, without the header line.
 - `.DS_Store` in the global dir produces a warning, not an error.

@@ -59,11 +59,12 @@ func (p proxyStore) Clear() error                 { return p.cur().Clear() }
 func (p proxyStore) Compact(f, t int, s chat.Message) error {
 	return p.cur().Compact(f, t, s)
 }
-func (p proxyStore) Repair(ms []chat.Message) error { return p.cur().Repair(ms) }
-func (p proxyStore) Flush() error                   { return p.cur().Flush() }
-func (p proxyStore) Thinking(on bool) error         { return p.cur().Thinking(on) }
-func (p proxyStore) Model(name string) error        { return p.cur().Model(name) }
-func (p proxyStore) Provider(name string) error     { return p.cur().Provider(name) }
+func (p proxyStore) Repair(ms []chat.Message) error        { return p.cur().Repair(ms) }
+func (p proxyStore) Flush() error                          { return p.cur().Flush() }
+func (p proxyStore) Thinking(on bool) error                { return p.cur().Thinking(on) }
+func (p proxyStore) Model(name string) error               { return p.cur().Model(name) }
+func (p proxyStore) Provider(name string) error            { return p.cur().Provider(name) }
+func (p proxyStore) Spend(model string, usd float64) error { return p.cur().Spend(model, usd) }
 
 type noStore struct{}
 
@@ -76,6 +77,7 @@ func (noStore) Repair([]chat.Message) error          { return nil }
 func (noStore) Flush() error                         { return nil }
 func (noStore) Model(string) error                   { return nil }
 func (noStore) Provider(string) error                { return nil }
+func (noStore) Spend(string, float64) error          { return nil }
 
 // plugSessions wires the SessionFile into the Deps; called by begin.
 func (w *world) plugSessions(d *Deps) error {
@@ -170,7 +172,7 @@ func (w *world) resume() error {
 	}
 	w.tb.Cleanup(func() { wr.Close() })
 	s.writer = wr
-	if err := w.ag.Load(l.Messages(), WithMaxSeq(l.MaxSeq()), WithModel(l.Model()), WithThinking(l.Thinking())); err != nil {
+	if err := w.ag.Load(l.Messages(), WithMaxSeq(l.MaxSeq()), WithModel(l.Model()), WithThinking(l.Thinking()), WithSpend(l.Spend())); err != nil {
 		return err
 	}
 	s.during = w.ag.History()

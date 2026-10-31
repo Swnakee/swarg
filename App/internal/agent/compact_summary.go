@@ -97,8 +97,8 @@ func (a *Agent) chunks(s span) [][]string {
 	return append(out, cur)
 }
 
-// ask performs one summary request and reads its stream to the end. Usage is ignored: the
-// meter only follows the Turn requests.
+// ask performs one summary request and reads its stream to the end. Its usage only adds to the spend:
+// the meter follows the Turn requests.
 func (a *Agent) ask(ctx context.Context, req chat.Request) (string, error) {
 	ch, err := a.provider().Stream(ctx, req)
 	if err != nil {
@@ -116,6 +116,8 @@ func (a *Agent) ask(ctx context.Context, req chat.Request) (string, error) {
 			switch ev.Kind {
 			case chat.EventDelta:
 				b.WriteString(ev.Text)
+			case chat.EventUsage: // the summary costs money too, though the meter ignores it
+				a.addSpend(req.Model, ev.Usage.Cost)
 			case chat.EventDone:
 				if ev.Err != nil {
 					return "", ev.Err

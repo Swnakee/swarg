@@ -44,6 +44,9 @@ type Deps struct {
 
 	LimitFor func(model string) int // nil = ContextLimit for every model; else the ContextLimit of a model id (R-41)
 	Tasks    TaskLimits             // Task mode limits; MaxDepth 0 = no Tasks (R-39)
+	Agents   AgentDeps              // sub-agents (R-120..R-127); the zero value = none
+
+	WarnUSD float64 // one warning when the Session spend first reaches this many USD (R-114); 0 = off. Never stops a Turn.
 
 	Now func() time.Time // nil = time.Now; times the Generation speed of every Step
 }
@@ -73,14 +76,20 @@ type Agent struct {
 	interrupted bool // first Interrupt or Abort of the running turn
 	aborted     bool // Abort (or a second Interrupt) of the running turn
 	stopped     bool
-	thinking    bool            // the thinking mode (R-60)
-	src         Source          // the model server in use and its presets (R-100)
-	model       string          // the Model choice: the model id of the next request (R-30)
-	chain       []*conversation // the running Chain: the Session, then the Tasks inside it; empty when idle
-	taskSeq     int             // Task ids handed out
-	turnTasks   int             // Tasks started in the running Turn (R-39 cap)
-	callSeq     int             // session-wide counter of generated call ids; the Turn's goroutines take turns
-	seq         int             // last chat.Message.Seq handed out; guarded by mu, never reset
+	thinking    bool                     // the thinking mode (R-60)
+	spend       spendState               // the Session's cost so far (R-111)
+	src         Source                   // the model server in use and its presets (R-100)
+	model       string                   // the Model choice: the model id of the next request (R-30)
+	chain       []*conversation          // the running Chain: the Session, then the Tasks inside it; empty when idle
+	taskSeq     int                      // Task ids handed out
+	turnTasks   int                      // Tasks and agents started in the running Turn (R-39 cap)
+	agents      map[string]*conversation // the running sub-agents by id; they are not on the Chain (R-122)
+	agentSeq    int                      // agent ids handed out
+	slots       *slots                   // agent slots, overall and per Source (R-122)
+	approving   chan struct{}            // one agent approval prompt at a time (R-125)
+	paths       pathLocks                // files being written right now (R-124)
+	callSeq     int                      // session-wide counter of generated call ids; the Turn's goroutines take turns
+	seq         int                      // last chat.Message.Seq handed out; guarded by mu, never reset
 
 	compacting     bool               // a Compaction runs (the worker is not in a Turn); guarded by mu
 	compactStop    bool               // Esc during the Compaction: no further span is replaced; guarded by mu
@@ -125,6 +134,9 @@ func New(deps Deps) *Agent {
 			LimitFor: deps.LimitFor, Health: deps.Health},
 		wake: make(chan struct{}, 1),
 		intr: make(chan struct{}, 1),
+
+		slots:     newSlots(deps.Agents.Max),
+		approving: make(chan struct{}, 1),
 	}
 	a.meter = meter{limit: a.limitFor(deps.Model)}
 	a.idle = sync.NewCond(&a.mu)
@@ -133,11 +145,13 @@ func New(deps Deps) *Agent {
 
 // limitFor is the ContextLimit of a model id on the Source in use: its LimitFor, else its
 // ContextLimit. Caller holds mu (or the Agent is not started yet).
-func (a *Agent) limitFor(model string) int {
-	if a.src.LimitFor != nil {
-		return a.src.LimitFor(model)
-	}
-	return a.src.ContextLimit
+func (a *Agent) limitFor(model string) int { return srcLimit(a.src, model) }
+
+// limitOf is the ContextLimit a request of c is measured against: its Source's and model's.
+// Caller holds mu.
+func (a *Agent) limitOf(c *conversation) int {
+	s, m := a.srcOf(c)
+	return srcLimit(s, m)
 }
 
 // limit is the Session's current ContextLimit (locks).
@@ -221,6 +235,9 @@ func (a *Agent) toolCancelsLocked() (out []context.CancelFunc) {
 			out = append(out, a.chain[i].toolsCancel)
 		}
 	}
+	for _, c := range a.agents {
+		out = append(out, c.toolsCancel)
+	}
 	return out
 }
 
@@ -244,6 +261,11 @@ func (a *Agent) Abort() {
 	cancels := a.toolCancelsLocked()
 	if len(a.chain) > 0 && a.inner().reqCancel != nil { // only the innermost has a request in flight
 		cancels = append(cancels, a.inner().reqCancel)
+	}
+	for _, c := range a.agents { // every running agent may have a request in flight
+		if c.reqCancel != nil {
+			cancels = append(cancels, c.reqCancel)
+		}
 	}
 	a.mu.Unlock()
 	for _, cancel := range cancels {
@@ -418,8 +440,13 @@ func (a *Agent) meterEvent() (Event, []string) {
 	return ev, a.meter.check(ev.Used, ev.Estimated)
 }
 
-// emit delivers an event; never call it while holding mu.
+// emit delivers an event; never call it while holding mu. The events of an agent's loop are
+// reduced to progress lines first.
 func (a *Agent) emit(ev Event) {
+	if isAgentID(ev.Task) {
+		a.agentEvent(ev)
+		return
+	}
 	if ev.Kind == EvWarning && a.deps.Trace != nil {
 		a.trace("warning", map[string]any{"text": ev.Text})
 	}

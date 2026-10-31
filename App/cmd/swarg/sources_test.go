@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"swarg/internal/agent"
 	"swarg/internal/config"
 	"swarg/internal/llm/llmtest"
+	"swarg/internal/ui"
 )
 
 // ---------------------------------------------------------------------------
@@ -76,6 +78,7 @@ func TestSources_SwitchUsesRecentModelAndCatalogLimit(t *testing.T) {
 }
 
 func TestSources_SwitchRefusesWithoutKeyOrBadEntry(t *testing.T) {
+	isolateConfigDir(t)
 	cfg := config.Defaults()
 	cfg.Providers["bad"] = config.Provider{Type: "openai", BaseURL: "nope", Model: "m", ContextLimit: 1, MaxTokens: 1}
 	os.Unsetenv("OPENROUTER_API_KEY")
@@ -118,6 +121,7 @@ func TestSources_CloudNoticeOnce(t *testing.T) {
 }
 
 func TestSources_ServersStates(t *testing.T) {
+	isolateConfigDir(t)
 	srv := orServer(t)
 	cfg := config.Defaults()
 	cfg.Providers = map[string]config.Provider{
@@ -143,7 +147,7 @@ func TestSources_ServersStates(t *testing.T) {
 	if rows[0].Name != "bad" || rows[1].Name != "down" || rows[2].Name != "key" || rows[3].Name != "up" {
 		t.Errorf("rows not sorted by name: %+v", rows)
 	}
-	if got["up"] != "ok" || !strings.HasPrefix(got["down"], "down: ") || got["key"] != "no key: set T11_MISSING_KEY" ||
+	if got["up"] != "ok" || !strings.HasPrefix(got["down"], "down: ") || !strings.HasPrefix(got["key"], "no key: set T11_MISSING_KEY") ||
 		!strings.HasPrefix(got["bad"], "bad config: ") || strings.Contains(got["bad"], `provider "bad"`) {
 		t.Errorf("states %v", got)
 	}
@@ -230,5 +234,67 @@ func TestSources_DownStateIsShort(t *testing.T) {
 	rows, _ := s.Servers(t.Context())
 	if st := rows[0].State; !strings.HasPrefix(st, "down: ") || strings.Contains(st, "/models") || strings.Contains(st, "Get ") {
 		t.Errorf("state %q", st)
+	}
+}
+
+// isolateConfigDir points config.Dir() (and so the key files) into a temp dir.
+func isolateConfigDir(t *testing.T) {
+	t.Helper()
+	d := t.TempDir()
+	t.Setenv("HOME", d)
+	t.Setenv("XDG_CONFIG_HOME", d)
+	t.Setenv("AppData", d)
+}
+
+// Bug (live, 2026-10-31): OpenRouter as the start provider (no Switch) showed the config's
+// 32768 for every model; the Catalog was fetched only by Switch or /model's list.
+func TestSources_LimitForFetchesTheCatalogOnce(t *testing.T) {
+	isolateConfigDir(t)
+	srv := orServer(t)
+	cfg := config.Defaults()
+	p := cfg.Providers["openrouter"]
+	p.BaseURL, p.APIKeyEnv = srv.URL, "T11_TEST_KEY"
+	cfg.Providers["openrouter"] = p
+	cfg.Provider = "openrouter"
+	t.Setenv("T11_TEST_KEY", "sk-test")
+	s, _ := testSources(t, &cfg)
+	lim := s.limitFor("openrouter")
+	if got := lim("a/alpha"); got != 200000 {
+		t.Errorf("LimitFor at start = %d, want the Catalog's 200000", got)
+	}
+	if got := lim("b/beta:free"); got != 32768 {
+		t.Errorf("LimitFor of a second model = %d, want 32768", got)
+	}
+	if got := lim("unknown"); got != p.ContextLimit {
+		t.Errorf("LimitFor of an unknown model = %d, want the entry's %d", got, p.ContextLimit)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// KeyUsage (R-113)
+// ---------------------------------------------------------------------------
+
+func TestSources_KeyUsageAsksOpenRouterOnly(t *testing.T) {
+	isolateConfigDir(t)
+	srv := orServer(t)
+	limit, left := 5.0, 4.0
+	srv.Key = &llmtest.Key{Label: "k", Limit: &limit, Remaining: &left, Usage: 1, Monthly: 1}
+	cfg := config.Defaults()
+	p := cfg.Providers["openrouter"]
+	p.BaseURL, p.APIKeyEnv = srv.URL, "T13_TEST_KEY"
+	cfg.Providers["openrouter"] = p
+	t.Setenv("T13_TEST_KEY", "sk-test")
+	s, _ := testSources(t, &cfg)
+	if _, err := s.KeyUsage(t.Context()); !errors.Is(err, ui.ErrNoKeyInfo) {
+		t.Fatalf("local source: err = %v, want ErrNoKeyInfo", err)
+	}
+	s.setActive("openrouter")
+	got, err := s.KeyUsage(t.Context())
+	if err != nil || got.Label != "k" || got.Limit == nil || *got.Limit != 5 || *got.Remaining != 4 || got.Monthly != 1 {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	srv.Key = &llmtest.Key{Status: 401, Body: "no"}
+	if _, err := s.KeyUsage(t.Context()); err == nil || strings.Contains(err.Error(), "sk-test") {
+		t.Errorf("err = %v, want a refusal that does not name the key", err)
 	}
 }

@@ -232,6 +232,28 @@ func (w *Writer) Thinking(on bool) error {
 	return w.write(record{Think: &on})
 }
 
+// Spend records the cost in USD of one response of model (R-111); replay sums the lines per model.
+// A blank model or a cost that is not positive writes nothing.
+func (w *Writer) Spend(model string, usd float64) error {
+	if model == "" || !(usd > 0) {
+		return nil
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.write(record{Spend: &spendRecord{Model: model, USD: usd}})
+}
+
+// Profile records a prompt profile choice (R-118); the last one wins on replay. A blank name is an
+// error and writes nothing.
+func (w *Writer) Profile(name string) error {
+	if name == "" {
+		return errors.New("session: blank prompt profile")
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.write(record{Prompt: name})
+}
+
 // Flush forces the file to stable storage.
 func (w *Writer) Flush() error {
 	w.mu.Lock()

@@ -330,6 +330,10 @@ func (m *model) configMenu() *menu {
 			keys = append(keys, s.Key)
 			cells = append(cells, []string{"  " + s.Label, fmt.Sprint(s.Value), s.Scope})
 		}
+		if m.d.Keys != nil { // the API keys live in their own menu
+			keys = append(keys, keysRowID)
+			cells = append(cells, []string{"  API keys", "open (/keys)", "global"})
+		}
 		items := make([]menuRow, len(keys))
 		for i, t := range columns(cells) {
 			items[i] = menuRow{ID: keys[i], Text: t, Match: keys[i] + " " + cells[i][0]}
@@ -354,6 +358,14 @@ func (m *model) configMenu() *menu {
 			}
 		case "model":
 			when = ""
+		case "profile": // the row of the prompt profile (R-117)
+			if m.d.Prompt != nil {
+				if err := m.d.Prompt.Choose(fmt.Sprint(v), ""); err != nil {
+					mn.note = err.Error()
+					return
+				}
+				when = ""
+			}
 		}
 		rebuild()
 		note, _ := saved(mn.scope, s.Label+" = "+fmt.Sprint(v), nil)
@@ -375,6 +387,10 @@ func (m *model) configMenu() *menu {
 		}
 	}
 	choose := func(id string) bool {
+		if id == keysRowID {
+			m.openMenu(m.keysMenu(), mn)
+			return false
+		}
 		s, ok := settings(id)
 		if !ok {
 			return false
@@ -382,6 +398,8 @@ func (m *model) configMenu() *menu {
 		switch {
 		case s.Kind == "bool":
 			set(s, s.Value != true)
+		case s.Live == "profile" && m.d.Prompt != nil: // Enter steps to the next profile
+			set(s, nextProfile(m.d.Prompt.Profiles(), fmt.Sprint(s.Value)))
 		case s.Live == "model":
 			m.openMenu(m.modelMenu(m.modelRows, func(v string) { set(s, v) }), mn)
 			if len(m.modelRows) == 0 {
@@ -396,4 +414,17 @@ func (m *model) configMenu() *menu {
 	mn.onScope = func(string) {}
 	rebuild()
 	return mn
+}
+
+// nextProfile is the profile after cur in the list (the first one after the last).
+func nextProfile(rows []PromptRow, cur string) string {
+	if len(rows) == 0 {
+		return cur
+	}
+	for i, r := range rows {
+		if r.Name == cur {
+			return rows[(i+1)%len(rows)].Name
+		}
+	}
+	return rows[0].Name
 }

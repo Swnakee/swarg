@@ -85,8 +85,11 @@ const (
 	FinishToolCalls   FinishReason = "tool_calls"
 )
 
-// Usage is the token accounting reported by the server.
-type Usage struct{ PromptTokens, CompletionTokens, CachedTokens int }
+// Usage is the token and cost accounting reported by the server.
+type Usage struct {
+	PromptTokens, CompletionTokens, CachedTokens int
+	Cost                                         float64 // USD charged for the response, when the server reports it (OpenRouter usage.cost); 0 = free or unknown
+}
 
 // EventKind is the kind of a StreamEvent.
 type EventKind int

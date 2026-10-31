@@ -236,6 +236,26 @@ func TestClient_AuthHeader(t *testing.T) {
 	}
 }
 
+func TestClient_KeyFuncReadEveryRequest(t *testing.T) {
+	hdr := make(chan string, 4)
+	c := rawClient(t, "ignored", func(w http.ResponseWriter, r *http.Request) {
+		hdr <- r.Header.Get("Authorization")
+		sseHandler("data: [DONE]\n\n")(w, r)
+	})
+	key := ""
+	c.Key = func() string { return key }
+	for _, k := range []string{"", "sk-test-1", "sk-test-2"} {
+		key = k
+		streamAll(t, c, userReq("hi"))
+	}
+	want := []string{"", "Bearer sk-test-1", "Bearer sk-test-2"}
+	for i, w := range want {
+		if got := <-hdr; got != w {
+			t.Errorf("request %d: Authorization = %q, want %q", i, got, w)
+		}
+	}
+}
+
 func TestClient_HTTPError(t *testing.T) {
 	big := strings.Repeat("x", 4096)
 	c := rawClient(t, "", func(w http.ResponseWriter, _ *http.Request) {

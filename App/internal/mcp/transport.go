@@ -54,7 +54,7 @@ func dialStdio(dir string, s config.MCPServer) (Transport, error) {
 	cmd.Dir = dir
 	cmd.Env = os.Environ()
 	for k, v := range s.Env {
-		cmd.Env = append(cmd.Env, k+"="+os.ExpandEnv(v))
+		cmd.Env = append(cmd.Env, k+"="+config.UserKeys().Expand(v))
 	}
 	in, err := cmd.StdinPipe()
 	if err != nil {

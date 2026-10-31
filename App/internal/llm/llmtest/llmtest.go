@@ -52,10 +52,22 @@ type Model struct {
 	Parameters         []string // supported_parameters; nil = omitted
 }
 
+// Key is the fake's key info (GET /v1/key), OpenRouter-shaped: nil Limit and Remaining are written
+// as null (a key without a limit). Status non-zero answers that error instead (Body = its text).
+type Key struct {
+	Label                string
+	Limit, Remaining     *float64
+	Usage, Daily, Weekly float64
+	Monthly              float64
+	Status               int
+	Body                 string
+}
+
 // Server is a running fake server.
 type Server struct {
 	URL    string  // base URL ending in /v1
 	Models []Model // answered at GET /v1/models; set before the first call
+	Key    *Key    // answered at GET /v1/key (OpenRouter key info); nil = 404; set before the first call
 
 	mu          sync.Mutex
 	replies     []Reply
@@ -73,6 +85,7 @@ func New(t testing.TB, replies ...Reply) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", s.serve)
 	mux.HandleFunc("GET /v1/models", s.serveModels)
+	mux.HandleFunc("GET /v1/key", s.serveKey)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	s.URL = srv.URL + "/v1"
@@ -175,6 +188,26 @@ func (s *Server) serveModels(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
+}
+
+// serveKey answers the key info in the OpenRouter shape; without Key it is a 404.
+func (s *Server) serveKey(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	k := s.Key
+	s.mu.Unlock()
+	switch {
+	case k == nil:
+		http.NotFound(w, nil)
+	case k.Status != 0 && k.Status != http.StatusOK:
+		w.WriteHeader(k.Status)
+		_, _ = io.WriteString(w, k.Body)
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
+			"label": k.Label, "limit": k.Limit, "limit_remaining": k.Remaining, "usage": k.Usage,
+			"usage_daily": k.Daily, "usage_weekly": k.Weekly, "usage_monthly": k.Monthly, "is_free_tier": false,
+		}})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -295,6 +328,7 @@ type tokenUsage struct {
 	CompletionTokens int           `json:"completion_tokens"`
 	TotalTokens      int           `json:"total_tokens"`
 	PromptDetails    promptDetails `json:"prompt_tokens_details"`
+	Cost             float64       `json:"cost,omitempty"`
 }
 
 type promptDetails struct {
@@ -357,6 +391,7 @@ func usageFrame(u chat.Usage) frame {
 		CompletionTokens: u.CompletionTokens,
 		TotalTokens:      u.PromptTokens + u.CompletionTokens,
 		PromptDetails:    promptDetails{CachedTokens: u.CachedTokens},
+		Cost:             u.Cost,
 	}
 	return f
 }

@@ -10,8 +10,11 @@ API:
 - `(*Client).Stream(ctx, chat.Request) (<-chan chat.StreamEvent, error)` - POSTs `{base}/chat/completions`; returns `(nil, err)` if the request cannot start.
 - `(*Client).Health(ctx, model string) error` - non-streaming POST `{model, messages:[{role:user,content:"hi"}], max_tokens:1, stream:false}`; nil on 2xx, else an error with status and body snippet. Uses its own 30 s timeout on top of ctx.
 - `(*Client).Catalog(ctx) ([]ModelInfo, error)` (T11, R-102) - `GET {base}/models` parsed as `ModelInfo{ID, Name, Context, Prompt, Completion, Tools, Reasoning, HasParameters}`: `name`, `context_length`, `pricing.prompt/completion` (USD per token, strings on the wire), `supported_parameters` (`Tools` = has `tools`, `Reasoning` = has `reasoning`; `HasParameters` says the field was present). Sorted by id, blanks and duplicates dropped; a plain server fills only `ID`; body cap 16 MB (OpenRouter lists ~500 models); 10 s timeout. `ModelInfo.Free()` = both prices zero. `(*Client).Models(ctx) ([]string, error)` - the Catalog's ids.
+- `(*Client).KeyInfo(ctx) (KeyInfo, error)` (T13, R-113) - `GET {base}/key` (OpenRouter): `KeyInfo{Label, Limit, Remaining *float64 (nil = no limit), Usage, Daily, Weekly, Monthly}` from `data.{label, limit, limit_remaining, usage, usage_daily, usage_weekly, usage_monthly}`; 10 s timeout; errors come from the shared status texts, which never contain the key.
 - Status texts (`statusError`, T11, R-103, I-35): 401 `the model server refused the API key (<status>): <snippet>`, 402 `no credits on the model server (...)`, 404 `the model server has no such model (...): <snippet>; /model lists the available ones`, 429 `the model server is rate limited (<status>, retry after N s)` or `... try again later`, 5xx `the model server failed upstream (...)`, else `model server returned <status>: <snippet>`. A 429 with `Retry-After` <= 30 s (`retryWaitMax`) is retried ONCE after the wait (ctx-aware); a longer wait, a missing header or a second 429 is reported. The key is never in a text.
 - `sse.go` (unexported): `readSSE`, `sseEvent{Comment, Data}` - SSE line parser.
+
+OpenRouter reports `usage.cost` in every response by itself: `usage: {include: true}` and `stream_options.include_usage` are deprecated no-ops there, so the request body is unchanged for cost (docs checked 2026-10-31).
 
 Request body: `{model, messages, stream: true, stream_options: {include_usage: true}, max_tokens, tools}`.
 - `max_tokens` is omitted when `MaxTokens` is 0. `Extra` keys go to the top level.
@@ -24,7 +27,7 @@ Event mapping:
 - non-empty `delta.reasoning_content` (else `delta.reasoning`, never both) -> `EventReasoning{Text}`, emitted before the content delta of the same chunk.
 - `finish_reason` -> remembered; `"tool_calls"` -> `FinishToolCalls`, `"length"` -> `FinishLength`, anything else -> `FinishStop`.
 - `delta.tool_calls[]` -> accumulated per call (see below); nothing is emitted until `[DONE]`.
-- chunk with `usage` -> `EventUsage` (cached tokens from `prompt_tokens_details.cached_tokens`).
+- chunk with `usage` -> `EventUsage` (cached tokens from `prompt_tokens_details.cached_tokens`; `Usage.Cost` from `usage.cost`, OpenRouter's charge in USD, read leniently: absent, null, non-numeric or <= 0 gives 0 and never an error, I-39).
 - `data: [DONE]` -> `EventDone{remembered finish, ToolCalls}`. `ToolCalls` is nil or holds every call accumulated in the stream, sorted by wire index (stable), whatever the finish reason.
 - Tool-call accumulation: a delta without `index` counts as index 0. It extends the latest call with that index. If the delta carries a non-empty `id` different from that call's id, a new call starts instead (index-0 parallel calls). `id` and `function.name` are set when present; `function.arguments` is appended. The client never generates ids: a missing id stays `""` and the agent fills it.
 - EOF before `[DONE]`, malformed JSON, read error, idle timeout -> `EventDone{FinishError, Err}`.
@@ -52,3 +55,7 @@ Gotchas:
 - Some servers send every parallel call with `index: 0`, each with its own `id`. The id change starts a new call; without it the calls would merge into one.
 - Some servers finish tool calls with `finish_reason: "stop"`. The calls are still delivered in `ToolCalls`; the finish stays `FinishStop`.
 - `arguments` is passed through raw. Malformed JSON is not caught here; the agent normalizes it before storing (mlx re-parses stored arguments on every later request).
+
+## Per-request key (T12, R-107)
+
+`Client.Key func() string` (optional): when set it supplies the API key on every request instead of the string given to `New`, so a key set or rotated in `/keys` is used by the client the running Source already holds. `cmd/swarg/sources.go` sets it to `Provider.APIKey`. An empty result sends no `Authorization`.

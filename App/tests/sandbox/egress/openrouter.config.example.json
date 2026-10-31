@@ -1,0 +1,4 @@
+{
+  "provider": "openrouter",
+  "tools": {"auto_approve": true}
+}

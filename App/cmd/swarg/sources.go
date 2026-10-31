@@ -26,7 +26,7 @@ const (
 )
 
 // sources adapts the config's providers to ui.ServersAPI (the /server list and switch) and
-// ui.ModelsAPI (the active Source's Catalog): one openai.Client per provider, the Catalog of each
+// ui.ModelsAPI (the active Source's Catalog): one openai.Client per provider (its key is read per request), the Catalog of each
 // probed or listed provider, the Recent models and the one-time cloud notice.
 type sources struct {
 	cfg     *config.Config
@@ -39,15 +39,33 @@ type sources struct {
 	active  string
 	clients map[string]*openai.Client
 	catalog map[string][]openai.ModelInfo
+	tried   map[string]bool // limitFor fetched (or tried to fetch) this Catalog
 }
 
 func newSources(cfg *config.Config, cwd string, recent *config.Recent, notices *config.Approvals) *sources {
 	return &sources{cfg: cfg, cwd: cwd, recent: recent, notices: notices, active: cfg.Provider,
-		clients: map[string]*openai.Client{}, catalog: map[string][]openai.ModelInfo{}}
+		clients: map[string]*openai.Client{}, catalog: map[string][]openai.ModelInfo{}, tried: map[string]bool{}}
 }
 
 var _ ui.ServersAPI = (*sources)(nil)
 var _ ui.ModelsAPI = (*sources)(nil)
+var _ ui.CostAPI = (*sources)(nil)
+
+// KeyUsage is what the active Source reports about its API key (OpenRouter GET /key, R-113); a
+// Source of another type has no such endpoint and gives ui.ErrNoKeyInfo. The key is sent by the
+// client and is in no text returned here (I-39).
+func (s *sources) KeyUsage(ctx context.Context) (ui.KeyUsage, error) {
+	name := s.Current()
+	if s.cfg.Providers[name].Type != "openrouter" {
+		return ui.KeyUsage{}, ui.ErrNoKeyInfo
+	}
+	k, err := s.client(name).KeyInfo(ctx)
+	if err != nil {
+		return ui.KeyUsage{}, err
+	}
+	return ui.KeyUsage{Label: k.Label, Limit: k.Limit, Remaining: k.Remaining, Usage: k.Usage,
+		Daily: k.Daily, Weekly: k.Weekly, Monthly: k.Monthly}, nil
+}
 
 // Current is the name of the Source in use.
 func (s *sources) Current() string {
@@ -62,7 +80,7 @@ func (s *sources) setActive(name string) {
 	s.mu.Unlock()
 }
 
-// client is the provider's client, made on first use (the key is read from the environment then).
+// client is the provider's client, made on first use.
 func (s *sources) client(name string) *openai.Client {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -70,19 +88,25 @@ func (s *sources) client(name string) *openai.Client {
 		return c
 	}
 	p := s.cfg.Providers[name]
-	c := openai.New(p.BaseURL, p.APIKey(), nil)
+	c := openai.New(p.BaseURL, "", nil)
+	c.Key = p.APIKey                // read on every request: a key set in /keys works at once (R-107)
 	c.IdleTimeout = p.IdleTimeout() // R-63
 	s.clients[name] = c
 	return c
 }
 
 // limitFor is the ContextLimit of a model on provider name: the Catalog's context_length when
-// known (R-102), else the entry's LimitFor.
+// known (R-102), else the entry's LimitFor. An openrouter Catalog not loaded yet (the start
+// provider gets no Switch) is fetched once, best effort.
 func (s *sources) limitFor(name string) func(model string) int {
 	return func(model string) int {
 		s.mu.Lock()
-		cat := s.catalog[name]
+		cat, tried := s.catalog[name], s.tried[name]
+		s.tried[name] = true
 		s.mu.Unlock()
+		if cat == nil && !tried && s.cfg.Providers[name].Type == "openrouter" {
+			cat, _ = s.fetch(name)
+		}
 		for _, m := range cat {
 			if m.ID == model && m.Context > 0 {
 				return m.Context
@@ -159,7 +183,7 @@ func (s *sources) Servers(ctx context.Context) ([]ui.ServerRow, error) {
 			continue
 		}
 		if p.APIKeyEnv != "" && p.APIKey() == "" {
-			rows[i].State = "no key: set " + p.APIKeyEnv
+			rows[i].State = p.NoKey()
 			continue
 		}
 		wg.Add(1)

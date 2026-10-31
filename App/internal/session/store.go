@@ -44,8 +44,14 @@ func (s *Store) Flush() error { return s.w.Flush() }
 // Thinking records a thinking mode switch.
 func (s *Store) Thinking(on bool) error { return s.w.Thinking(on) }
 
+// Profile records a prompt profile choice.
+func (s *Store) Profile(name string) error { return s.w.Profile(name) }
+
 // Model records a Model choice.
 func (s *Store) Model(name string) error { return s.w.Model(name) }
 
 // Provider records a Source switch.
 func (s *Store) Provider(name string) error { return s.w.Provider(name) }
+
+// Spend records the cost of one response (R-111).
+func (s *Store) Spend(model string, usd float64) error { return s.w.Spend(model, usd) }

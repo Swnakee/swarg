@@ -26,10 +26,20 @@ A new domain term is added here before it appears in code, scenarios or docs.
 | Source | The Provider entry in use at run time with its client, model and request presets; the user calls it the server (`/server`), the config key stays `providers`; switched between requests (R-100) | backend switch, endpoint | `agent.Source`, `Agent.SetSource`, `agent.EvProvider` |
 | Catalog | The model list of a Source as its server reports it: id, name, context length, prices, supported parameters (R-102) | model list, registry | `openai.ModelInfo`, `Client.Catalog` |
 | Recent models | Per Source, the model ids used before, newest first, kept in the user config dir (R-101) | history, MRU | `config.Recent` |
+| Keys file | The user's one global file `<config dir>/keys.env` with `NAME=value` lines, private to the user; the only place a Key value is written, by the user's own editor (R-106, I-37) | vault, secrets file, keychain, key store | `config.KeyStore.File`, `config.UserKeys` |
+| Old Key directory | The earlier layout `<config dir>/keys/<NAME>`, one private file per Key; still read after the Keys file, never written or deleted by swarg (R-106) | key store, keys dir | `config.KeyStore.OldDir` |
+| Key | An API key or token kept in the Keys file under an upper-case name (the `api_key_env` of a provider, a `$VAR` of an MCP header or env); the environment variable of the same name wins (R-105, R-107) | secret, credential, token file | `KeyStore.Lookup`, `ui.KeyRow` |
 | Cloud notice | The one-time notice per project shown at the first switch to a Source that is not local (R-104) | privacy warning, consent | `Approvals.Notice`, `config.Provider.Local` |
+| Spend | The money a Session has cost so far in USD: the sum of the costs the server reported per response (OpenRouter `usage.cost`), kept per model id and in the SessionFile; a local server adds 0 (R-111) | bill, budget, balance | `agent.Spend`, `Agent.Spend`, `EvSpend` |
+| Warning level | The optional `cost.warn_usd`: the Spend at which the user is warned once; it never stops anything (R-114, I-39) | spend limit, budget cap | `config.Cost.WarnUSD`, `Deps.WarnUSD` |
 | StreamEvent | One event of a streamed completion: text, prefill progress, usage, or the final done | chunk, token | `chat.StreamEvent` |
 | SystemPrompt | The first message of every request, assembled from Blocks | preamble, instructions | `prompt.Set.Build` |
 | Block | One switchable piece of the SystemPrompt (base, global `NN-name.md`, project `SWARG.md`, env, tool blocks); a `<name>.md` override file replaces a built-in one (R-49) | snippet, section, part | `prompt.Block` |
+| Prompt Profile | How much instruction text the SystemPrompt carries: `compact` (the base Block alone), `standard` (+ the standard layer), `full` (+ the full layer); cumulative, chosen by the config or by the user (R-115, R-116) | mode, level, preset | `prompt.Profile` |
+| Agent | A helper run for one job: a child conversation with its own history, Source (server and model), system prompt, tool allowlist and step limit; several run at once; hands back one AgentResult (R-120, R-122); not a Task (a Task shares the Session's Source and runs alone) | sub-agent run, worker, subtask | `agent.runAgent`, `conversation.agent` |
+| Agent type | A named kind of Agent: name, one-line description, server, model, profile, tools, max steps and a body of instructions; from a markdown file or built in (`general`, `explore`, `plan`, `review`) (R-121) | role, persona, mode | `agents.Type`, `agent.AgentType` |
+| Slot | Permission to run one Agent request: one per Source (`providers.<p>.max_parallel`) and one of the (at most 4) overall; an Agent without a free Slot waits (R-122) | lane, permit | `slots` |
+| AgentResult | The ToolResult of an `agent` call: the TaskResult format (R-38) | report, answer | tool Message named `agent` |
 | BackgroundJob | A shell command that outlives the ToolCall that started it; read and killed later by id (`bg1`, `bg2`, ...); not a Task (agent work) | daemon, task, process | `tools.Jobs` / `tools.JobInfo` |
 | Detach | The user's move of the running detachable ToolCall to the background; the call returns at once and its command becomes a BackgroundJob | suspend, push to bg | `ToolHooks.Detach`, `Agent.Background` |
 | Mod | An external process that extends swarg through the JSON protocol | plugin, extension | `Mod` |
@@ -380,17 +390,137 @@ Rules are numbered `R-n`; each one gets BDD scenarios (normal, boundary, failure
   the body snippet, never the key (T11).
 - R-104 A Source that is not local (https, or a public address) sees the conversation and the files
   the tools read: the first switch to one per project shows a notice once (kept in `approvals.json`).
-  The key is read from the environment variable named by `api_key_env` only; a configured active
-  Source without its key is a start error naming the variable (T11).
+  The key is never stored in a config file (R-105); a configured active Source without its key is a
+  start error naming the variable and the Keys file (T11).
+- R-105 A provider's key is the environment variable named by `api_key_env`, else the Key of that
+  name in the Keys file (R-106). The env var wins.
+- R-106 Keys are written only in one global Keys file, `<config dir>/keys.env`, by the user in an
+  editor: lines `NAME=value`, blank lines and `#` comments, one pair of surrounding quotes stripped
+  from the value, `NAME=` with no value is no Key. A name is `^[A-Z][A-Z0-9_]{0,63}$`. The file must
+  be private (no group or other permission bit; Windows has none to check): otherwise it is ignored
+  and a warning names the file and `chmod 600`. A line that is not `NAME=value` is skipped with a
+  warning that names the line NUMBER only, never its text. The lookup order is: the environment, the
+  Keys file, the Old Key directory. The file is read again on every lookup, so an edit applies at
+  once. Swarg never writes a Key value anywhere and never moves or deletes an Old Key file; when
+  Old Key files exist, a one-line start hint suggests moving them into the Keys file. The store is
+  global: no project scope, never in `config.json`. `/keys` and the `API keys` row of `/config` show
+  every name the config uses (providers' `api_key_env`, `$VAR` / `${VAR}` in MCP `headers` and `env`)
+  plus every Key found in the files: who uses it, the state `set (env)` / `set (env, wins)` /
+  `set (keys.env)` / `set (old keys dir)` / `missing`, the value masked as the first 6 + `…` + the
+  last 4 characters when it has 16 or more, else `set`. The menu is view only; its footer shows the
+  file and `r reload` (T12).
+- R-107 A Key edited in the Keys file is used at once, without a restart: the provider client reads
+  its key on every request (`Client.Key`), `/server` and a switch re-check it, an MCP `$VAR` is
+  resolved when the server is dialled (`/mcp restart` re-reads it). `$VAR` in MCP `headers` and `env`
+  resolves the environment first, then the Keys file, then the Old Key directory (same rule as
+  R-105) (T12).
+- R-108 No Key is typed or pasted into swarg: there is no input for one (no `/keys set`, no hidden
+  field), and a `/keys` line with a value or any unknown word is refused with a usage text that does
+  not echo the line (T12).
+- R-109 A chat message that looks like an API key (`sk-` + 20 or more of `A-Za-z0-9_-`, or a GitHub
+  token `ghp_`/`gho_`/`ghu_`/`ghs_` + 30 or more) is not sent on the first Enter: it stays in the
+  input and a notice (without the text) points at the Keys file (`/keys` shows where). The same text sent again goes through;
+  an edited text warns again. `/keys ...` lines are exempt (T12).
+- R-110 The Keys file template is made only on request (`/keys init`, or `i` in the keys menu), never
+  by itself: a commented file, mode 0600, with a `# NAME=` line for every Key name the config uses,
+  sorted. It never overwrites an existing file (the request is refused with a notice). The config
+  dir is created 0700 when missing (T12).
+- R-111 Spend: the cost of each response (`usage.cost` in USD, read when the server sends it; OpenRouter
+  does so for every response, no request field is needed) is added to the Session's Spend, in total and
+  per model id (the model of the request, Task and Compaction requests included). A server that sends
+  no cost, a zero, a negative or a malformed one adds nothing. Every cost is a `spend` line in the
+  SessionFile; resuming or opening a Session restores the Spend (T13).
+- R-112 The Bottom panel shows the Spend (`$0.0012`: 4 decimals under a cent, 3 under a dollar, 2 from a
+  dollar) right after the context meter, only while it is above 0 (T13).
+- R-113 `/cost` prints the Session Spend with the models, dearest first; for a Source of type
+  `openrouter` it then asks `GET /key` and prints the key's label, usage today / week / month / all
+  time and the limit with what remains (or `no limit`). Another Source, or a failed query, leaves the
+  Session part alone; a failure adds one line with the first line of the error (T13).
+- R-114 `cost.warn_usd` (USD, 0 = off, default off): when the Spend first reaches it in a Session, one
+  warning is shown (`spend $X reached the warning level $Y`); a Session resumed already over the level
+  is not warned again. There is no hard limit and the warning never stops, refuses or delays a
+  request or a Turn (owner decision 2026-10-31) (T13).
 - R-90 An unknown Tool name in a ToolCall is an error ToolResult that names the offered Tools
   sharing a word (3+ letters, split on `_`/`-`, `mcp` ignored) with it: `unknown tool save_tool;
   did you mean mcp__demo__save?` (at most three). T8 eval: the 9B called `save_tool` for an MCP tool.
+
+- R-115 The SystemPrompt has three Prompt Profiles, cumulative: `compact` is the base Block alone (byte-identical
+  to the prompt before T13), `standard` adds the standard layer, `full` adds the full layer on top of
+  it. The layers are Blocks between the base and the tool Blocks; a layer is in the Set (`/blocks`,
+  `List`) only while its Profile is in force. A Profile change applies from the next request (T13 B).
+- R-116 The Profile a Session starts with: the most specific `prompt.profiles` model pattern that matches
+  the model (longest pattern), else `providers.<p>.profile`, else `prompt.profile`, else `compact`. It
+  follows a Model or Source change until the user chooses a Profile or a resumed Session carries one. An
+  unknown name in the config is a config error naming the known ones (T13 B).
+- R-117 `/prompt` shows the Profiles with their size and marks the one in force; `/prompt <name>` (or
+  Enter in the menu) applies one to this Session; with `global` or `project` (key `s` in the menu) it is
+  also written as `prompt.profile`; the `/config` row `prompt profile` steps through the Profiles. An
+  unknown name is refused with the known ones and changes nothing (T13 B).
+- R-118 A Profile the user chose is recorded in the SessionFile (`{"prompt":"<name>"}`, the last one
+  wins) and holds for the Session: a resumed Session, or one opened in the app, continues with it
+  instead of the config's Profile; a Session without the record leaves the Profile to the config
+  (T13 B).
+- R-119 A file `profile-standard.md`, `profile-full.md` or `subagents.md` in the blocks folder replaces
+  that layer's text (like R-49; the warning is printed at load). `subagents` is the sub-agent policy
+  layer: filled by main with the enabled agent types (R-123; empty when none), on in `standard` and `full` only, and an empty layer leaves
+  no gap in the SystemPrompt (T13 B).
+
+- R-120 An Agent starts with an empty history and only the goal (framed as a job of the main agent); it
+  uses the Source and model of its type (`server`, `model`; empty or `inherit` = the Session's), the
+  system prompt built for its type (the type's profile layers, the Tool lines it may use, its body, the
+  project file, the env block with its own model; never the sub-agent policy), and its own step limit
+  (`max_steps`, else `tasks.max_steps`). Its Messages never enter the Session history or the Store (R-37
+  and I-14 hold) (T13 C).
+- R-121 An Agent type allows tools by an allowlist: names, `*` (all) and `readonly` (every read-only
+  tool); empty = all. A call outside it is an error ToolResult and does not run. Built-in types:
+  `general` (all), `explore` (readonly), `plan` (readonly, returns a plan), `review` (readonly and
+  `shell` for tests and read-only git). Types live in `<config dir>/agents/<name>.md` and
+  `<project>/.swarg/agents/<name>.md`; project beats global beats built-in; front matter `description`
+  is required. `/agents` lists the types, switches one (saved as `agents.disabled` in a scope) and
+  `new <name>` writes a template file (T13 C).
+- R-122 Several `agent` calls of one step run at once. An Agent needs a Slot of its Source
+  (`providers.<p>.max_parallel`, default 1 for `openai`/`ollama`, 4 for `openrouter`; 1..4) and one of the
+  overall Slots (`agents.max_parallel`, default and maximum 4); without one it waits, holding nothing,
+  and a wait ends with Esc. Agents are not on the Chain: Interrupt and Abort walk the running Agents too
+  (T13 C).
+- R-123 The `agent` Tool is offered only to the Session (never inside an Agent or a Task) and only while
+  agent types are on offer. Under the `compact` Profile none are, so compact never offers or describes it
+  (I-40); `standard` and `full` fill the `subagents` layer with the enabled types and the rules for
+  delegating, and a switch in `/agents` rewrites it (T13 C).
+- R-124 Two Agents never write one file at the same time: the Run of a call that changes a file holds a
+  lock on its path; a second simultaneous call on that path is an error ToolResult naming the holder, and
+  nothing is written. The AgentResult lists the files the Agent changed (R-38) (T13 C).
+- R-125 A call of an Agent that needs the user's Approval asks through the same prompt as the Session's,
+  one prompt at a time; the others wait, and Esc ends the wait. Two denied calls end the Agent
+  (`stopped: tool calls were denied`) (T13 C).
+- R-126 Each running Agent is one block of the Session list: its `agent` call, labelled `<type>: <goal>`,
+  with live lines `model <id>` and `step N/M <call>`; the text, tools and meter of an Agent never reach
+  the list. Esc interrupts all Agents (the second Esc aborts them); the cost of their requests adds to the
+  Session spend (R-111) (T13 C).
+- R-127 An AgentResult has the TaskResult format (R-38). An `agent` call with an empty goal, an unknown
+  type, the goal of an Agent already running, or past the per-Turn limit (shared with Tasks,
+  `tasks.max_per_turn`) is an error ToolResult without a model request (T13 C).
+- R-128 The chosen Agent types are kept globally: `/agents` (menu Space / label, `/agents on|off <name>`)
+  saves `agents.disabled` to the GLOBAL scope by default, and `/agents new <name>` writes the type file
+  into the global agents folder `<config dir>/agents/`, even when the project has a `.swarg` folder
+  (unlike `/skills`, which defaults to the project then). Only an explicit `project` argument, or Tab in
+  the menu, uses the project (`.swarg/config.json`, `.swarg/agents/`). With no Scopes the switch is for
+  this run only (T13 global agents).
+- R-129 An Agent type comes from, strongest first, a project file, a global file, the built-in of that
+  name. `/agents edit <name>` (key `e` in the menu) copies a built-in's full definition (front matter and
+  body) into `<config dir>/agents/<name>.md` unless that file exists (never overwritten) and reports the
+  path; for a type that already has a file it reports that file. A changed, added or removed agent file
+  applies without a restart: the folders are re-read when `/agents` is opened, after `new` / `edit`, and
+  at the next agent request (the `subagents` prompt layer is rewritten). Which types are off is kept.
+  Each Source has a default prompt Profile: the `openrouter` preset is `standard` (eval B4:
+  compact 15/16, standard 16/16, full 14/16), local presets stay `compact` (T13 global agents).
 
 ## Invariants
 
 Invariants are numbered `I-n`; each one is a test target.
 
-- I-1 At most one Turn runs at a time; Provider requests never overlap.
+- I-1 At most one Turn runs at a time; the Session's own Provider requests never overlap, and none runs
+  while its Agents run. Agent requests overlap only within the Slots (R-122), at most 4 at once.
 - I-2 Every stream ends with exactly one done event.
 - I-3 Every assistant ToolCall in the history is followed by exactly one tool Message with its id.
 - I-4 Tools never touch files outside the project folder (`shell` is the one exception and asks for
@@ -416,8 +546,18 @@ Invariants are numbered `I-n`; each one is a test target.
   project and that entry (R-97) (T10).
 - I-35 An API key never leaves the HTTP client: it is not in a config value, a SessionFile, a Trace,
   a notice or any error text (the status texts carry the status and the body snippet only) (T11).
+- I-39 Spend only informs: a missing, zero or malformed cost never fails a request or a stream, no
+  Spend or warning step can stop or delay a Turn, and the API key is in no `/cost` text (key queries
+  report errors by status only) (T13).
 - I-36 A Source switch never changes a request in flight: the running stream ends on the old server;
   only requests built afterwards use the new one (T11).
+- I-37 A Key value exists in exactly one file, the Keys file (or the Old Key directory until it is
+  moved), and in memory in the HTTP client and the MCP transport: not in `config.json`,
+  `approvals.json`, `recent.json`, a SessionFile, a Trace, a notice, a warning, a menu row (only the
+  mask), or any error text (extends I-35 and I-32) (T12).
+- I-38 Swarg has no input that takes a Key value: a Key never passes the chat input, the Waiting
+  Messages, the history sent to the model or a notice through the keys UI (R-108); a key-like chat
+  message is held back (R-109) (T12).
 - I-32 The values of `mcp.servers.<name>.headers` never leave the HTTP Transport: not in a trace, a
   SessionFile, a log, a warning, a ToolResult, `/mcp <server>` or any error text (header names may
   be named, values never) (T9).
@@ -433,6 +573,13 @@ Invariants are numbered `I-n`; each one is a test target.
   its Name records (T3 ui).
 - I-15 A model-chosen URL never makes a request to a private address: the check runs on the address
   that is dialed, for every redirect hop (T4 tools).
+
+- I-40 The `compact` SystemPrompt never changes with a Profile: no layer text, no sub-agent policy and
+  no Block or Profile name ever reaches it (and no internal name reaches any Profile) (T13 B).
+
+- I-41 An Agent has no `agent` and no `task` Tool: Agents never nest (T13 C).
+- I-42 Nothing of an Agent reaches the Session but its AgentResult and its cost: not its Messages, its
+  streamed text, its tool output or its meter (T13 C).
 
 ## Open questions
 

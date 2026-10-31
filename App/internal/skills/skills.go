@@ -110,15 +110,15 @@ func read(dir, source string) (*Skill, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: no %s", dir, skillFile)
 	}
-	meta, body := frontMatter(strings.ReplaceAll(string(b), "\r\n", "\n"))
+	meta, body := FrontMatter(strings.ReplaceAll(string(b), "\r\n", "\n"))
 	if meta["description"] == "" {
 		return nil, fmt.Errorf("%s: no description in the front matter of %s", dir, skillFile)
 	}
 	return &Skill{Name: name, Description: meta["description"], Source: source, Dir: dir, Enabled: true, body: body}, nil
 }
 
-// frontMatter splits a "---" block of key: value lines from the body. No block: empty meta.
-func frontMatter(text string) (meta map[string]string, body string) {
+// FrontMatter splits a "---" block of key: value lines from the body. No block: empty meta.
+func FrontMatter(text string) (meta map[string]string, body string) {
 	meta = map[string]string{}
 	rest, ok := strings.CutPrefix(text, "---\n")
 	if !ok {

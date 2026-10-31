@@ -40,6 +40,25 @@ type Provider struct {
 	// sends a tool call in one chunk at the end of the generation, so a long call at a few tok/s
 	// is minutes of silence.
 	IdleTimeoutSec int `json:"idle_timeout_s,omitempty"`
+	// Profile is this Source's default prompt profile ("" = prompt.profile, R-116).
+	Profile string `json:"profile,omitempty"`
+	// MaxParallel is how many sub-agent requests may run at once on this Source (R-122);
+	// 0 = the default of the type: 1 for openai and ollama (a local single lane), 4 for openrouter.
+	MaxParallel int `json:"max_parallel,omitempty"`
+}
+
+// maxParallelLimit is the largest max_parallel a Source or agents.max_parallel may name.
+const maxParallelLimit = 4
+
+// Parallel is the number of sub-agent requests this Source takes at once (R-122).
+func (p Provider) Parallel() int {
+	switch {
+	case p.MaxParallel > 0:
+		return p.MaxParallel
+	case p.Type == "openrouter":
+		return maxParallelLimit
+	}
+	return 1
 }
 
 // IdleTimeout is the stream idle limit: IdleTimeoutSec, or 10 minutes when unset.
@@ -53,6 +72,10 @@ func (p Provider) IdleTimeout() time.Duration {
 // Prompt holds the system prompt settings.
 type Prompt struct {
 	WarnShare float64 `json:"warn_share"` // default 0.25
+	// Profile is the start prompt profile (compact, standard, full; "" = compact, R-116);
+	// Profiles maps a model pattern to a profile and wins over a provider's profile.
+	Profile  string            `json:"profile,omitempty"`
+	Profiles map[string]string `json:"profiles,omitempty"`
 }
 
 // Tools holds the tool settings.
@@ -88,6 +111,11 @@ type Context struct {
 	AutoCompact int `json:"auto_compact"`
 }
 
+// Cost holds the spend settings (R-114). There is no hard limit: swarg shows the spend and warns.
+type Cost struct {
+	WarnUSD float64 `json:"warn_usd"` // one warning when the Session spend reaches this many USD; 0 = off
+}
+
 // Tasks holds the Task mode limits (nested sub-tasks of the agent).
 type Tasks struct {
 	MaxDepth   int `json:"max_depth"`    // nesting depth, 0..8, 0 = Tasks off
@@ -98,6 +126,12 @@ type Tasks struct {
 // Skills holds the Skill settings (R-84).
 type Skills struct {
 	Disabled []string `json:"disabled"` // Skill names switched off
+}
+
+// Agents holds the sub-agent settings (R-120..R-122).
+type Agents struct {
+	Disabled    []string `json:"disabled"`     // agent type names switched off
+	MaxParallel int      `json:"max_parallel"` // agents running at once over all Sources, 1..4
 }
 
 // MCPServer is one MCP Server (R-85): a stdio program (command) or a Streamable HTTP endpoint (url).
@@ -136,8 +170,10 @@ type Config struct {
 	Web       Web                 `json:"web"`
 	Session   Session             `json:"session"`
 	Context   Context             `json:"context"`
+	Cost      Cost                `json:"cost"`
 	Tasks     Tasks               `json:"tasks"`
 	Skills    Skills              `json:"skills"`
+	Agents    Agents              `json:"agents"`
 	MCP       MCP                 `json:"mcp"`
 }
 
@@ -197,10 +233,11 @@ func Defaults() Config {
 			"openrouter": {
 				Type:         "openrouter",
 				BaseURL:      "https://openrouter.ai/api/v1",
-				Model:        "google/gemma-4-26b-a4b-it:free",
+				Model:        "nvidia/nemotron-3.5-lightning:free",
 				ContextLimit: 32768,
 				MaxTokens:    4096,
 				APIKeyEnv:    "OPENROUTER_API_KEY",
+				Profile:      "standard", // eval B4: compact 15/16, standard 16/16, full 14/16 (R-129)
 			},
 		},
 		Prompt: Prompt{WarnShare: 0.25},
@@ -210,6 +247,7 @@ func Defaults() Config {
 		Session: Session{Save: true, Keep: 50, Trace: true},
 		Context: Context{AutoCompact: 70},
 		Tasks:   Tasks{MaxDepth: 8, MaxSteps: 15, MaxPerTurn: 8},
+		Agents:  Agents{MaxParallel: maxParallelLimit},
 		MCP:     MCP{Confirm: true},
 	}
 }
@@ -218,7 +256,7 @@ func Defaults() Config {
 const defaultThinkingMaxTokens = 8192
 
 // ThinkingBody is the part of the request body that changes with thinking on (R-60): it is laid
-// over ExtraBody. Qwen3.5 thinking preset for precise coding (AI_Notes 05). An ollama provider
+// over ExtraBody. Qwen3.5 thinking preset for precise coding. An ollama provider
 // switches thinking with reasoning_effort instead of chat_template_kwargs (R-64); an openrouter
 // provider with the `reasoning` object (R-102).
 func (p Provider) ThinkingBody() map[string]any {
@@ -308,6 +346,9 @@ func (c Config) Validate() error {
 	if c.Prompt.WarnShare <= 0 || c.Prompt.WarnShare >= 1 {
 		return fmt.Errorf("config: prompt.warn_share must be between 0 and 1 exclusive, got %v", c.Prompt.WarnShare)
 	}
+	if err := c.Prompt.validateProfiles(); err != nil {
+		return err
+	}
 	if c.Tools.MaxSteps < 1 || c.Tools.MaxSteps > 200 {
 		return fmt.Errorf("config: tools.max_steps must be between 1 and 200, got %d", c.Tools.MaxSteps)
 	}
@@ -337,6 +378,9 @@ func (c Config) Validate() error {
 	if a := c.Context.AutoCompact; a != 0 && (a < 50 || a > 95) {
 		return fmt.Errorf("config: context.auto_compact must be 0 (off) or between 50 and 95, got %d", a)
 	}
+	if w := c.Cost.WarnUSD; !(w >= 0) || w > 1e6 { // also refuses NaN
+		return fmt.Errorf("config: cost.warn_usd must be 0 (off) or a positive amount in USD, got %v", w)
+	}
 	if d := c.Tasks.MaxDepth; d < 0 || d > 8 {
 		return fmt.Errorf("config: tasks.max_depth must be between 0 and 8, got %d", d)
 	}
@@ -345,6 +389,9 @@ func (c Config) Validate() error {
 	}
 	if c.Tasks.MaxPerTurn < 1 || c.Tasks.MaxPerTurn > 50 {
 		return fmt.Errorf("config: tasks.max_per_turn must be between 1 and 50, got %d", c.Tasks.MaxPerTurn)
+	}
+	if n := c.Agents.MaxParallel; n < 1 || n > maxParallelLimit {
+		return fmt.Errorf("config: agents.max_parallel must be between 1 and %d, got %d", maxParallelLimit, n)
 	}
 	return nil
 }
@@ -374,13 +421,23 @@ func (c *Config) Override(model, baseURL string) {
 	c.Providers[c.Provider] = p
 }
 
-// APIKey returns the API key from the environment variable named by APIKeyEnv,
-// or "" when APIKeyEnv is empty or unset.
+// APIKey returns the API key (R-105): the environment variable named by APIKeyEnv, else the
+// keys file <config dir>/keys.env, else the old keys directory (R-106). A file that others can
+// read (any group or other permission bit, outside Windows) is ignored. "" when there is no key.
 func (p Provider) APIKey() string {
 	if p.APIKeyEnv == "" {
 		return ""
 	}
-	return os.Getenv(p.APIKeyEnv)
+	v, _ := UserKeys().Lookup(p.APIKeyEnv)
+	return v
+}
+
+// NoKey is the hint for a provider whose key is missing: where to put it.
+func (p Provider) NoKey() string {
+	if f := UserKeys().File; f != "" && ValidKeyName(p.APIKeyEnv) {
+		return fmt.Sprintf("no key: set %s or add the line %s=... to %s (chmod 600; /keys init creates it)", p.APIKeyEnv, p.APIKeyEnv, f)
+	}
+	return "no key: set " + p.APIKeyEnv
 }
 
 // LimitFor returns the context limit of model: the file's context_limits entry,
@@ -414,6 +471,11 @@ func (p Provider) Validate(name string) error {
 	if p.ContextLimit <= 0 {
 		return fmt.Errorf("config: provider %q: context_limit must be > 0", name)
 	}
+	if p.Profile != "" {
+		if err := checkProfile("providers."+name+".profile", p.Profile); err != nil {
+			return err
+		}
+	}
 	ids := make([]string, 0, len(p.ContextLimits))
 	for id := range p.ContextLimits {
 		ids = append(ids, id)
@@ -423,6 +485,9 @@ func (p Provider) Validate(name string) error {
 		if p.ContextLimits[id] <= 0 {
 			return fmt.Errorf("config: provider %q: context_limits[%q] must be > 0", name, id)
 		}
+	}
+	if p.MaxParallel < 0 || p.MaxParallel > maxParallelLimit {
+		return fmt.Errorf("config: provider %q: max_parallel must be between 0 and %d, got %d", name, maxParallelLimit, p.MaxParallel)
 	}
 	if p.MaxTokens <= 0 {
 		return fmt.Errorf("config: provider %q: max_tokens must be > 0", name)
@@ -444,7 +509,7 @@ func (c Config) Ready(name string) (Provider, error) {
 		return p, err
 	}
 	if p.APIKeyEnv != "" && p.APIKey() == "" {
-		return p, fmt.Errorf("provider %q: no key: set %s", name, p.APIKeyEnv)
+		return p, fmt.Errorf("provider %q: %s", name, p.NoKey())
 	}
 	return p, nil
 }

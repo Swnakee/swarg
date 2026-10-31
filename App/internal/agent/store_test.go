@@ -21,11 +21,12 @@ import (
 
 // storeOp is one call the fakeStore saw.
 type storeOp struct {
-	kind  string // message | patch | clear | compact | repair | model | flush
-	model string // model: the chosen id
-	on    bool   // thinking: the new mode
-	from  int    // compact: first Seq replaced
-	to    int    // compact: last Seq replaced
+	kind  string  // message | patch | clear | compact | repair | model | flush
+	model string  // model: the chosen id
+	on    bool    // thinking: the new mode
+	usd   float64 // spend: the cost of one response
+	from  int     // compact: first Seq replaced
+	to    int     // compact: last Seq replaced
 	msg   chat.Message
 	msgs  []chat.Message
 	patch []chat.Patch
@@ -66,6 +67,9 @@ func (f *fakeStore) Flush() error                   { return f.add(storeOp{kind:
 func (f *fakeStore) Thinking(on bool) error         { return f.add(storeOp{kind: "thinking", on: on}) }
 func (f *fakeStore) Model(name string) error        { return f.add(storeOp{kind: "model", model: name}) }
 func (f *fakeStore) Provider(name string) error     { return f.add(storeOp{kind: "provider", model: name}) }
+func (f *fakeStore) Spend(model string, usd float64) error {
+	return f.add(storeOp{kind: "spend", model: model, usd: usd})
+}
 
 func (f *fakeStore) all() []storeOp {
 	f.mu.Lock()

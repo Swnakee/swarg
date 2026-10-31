@@ -35,15 +35,16 @@ type tickMsg time.Time
 
 // model is the Bubble Tea model. It is mutated in place (pointer receiver).
 type model struct {
-	d      Deps
-	ctx    context.Context
-	clock  func() time.Time
-	tick   func() tea.Cmd // spinner timer; a field so tests need no real timer
-	ta     textarea.Model
-	cv     *conv // the conversation list: everything on screen above the input
-	cur    int   // list index of the streaming assistant item, -1 when none
-	width  int
-	height int // screen rows; 0 until the first WindowSizeMsg
+	d         Deps
+	keyWarned string // the text that looked like an API key and was held back once (R-109)
+	ctx       context.Context
+	clock     func() time.Time
+	tick      func() tea.Cmd // spinner timer; a field so tests need no real timer
+	ta        textarea.Model
+	cv        *conv // the conversation list: everything on screen above the input
+	cur       int   // list index of the streaming assistant item, -1 when none
+	width     int
+	height    int // screen rows; 0 until the first WindowSizeMsg
 
 	busy, stopping, quitting, ticking bool
 	gotText                           bool
@@ -79,6 +80,7 @@ type model struct {
 	bgTick                            func() tea.Cmd // job refresh timer; a field so tests need no timer
 	waiting                           []string       // Waiting Messages: sent, not taken by the agent yet (oldest first)
 	thinking                          bool           // the thinking mode shown in the Bottom panel
+	spend                             float64        // the Session spend in USD shown in the Bottom panel (R-112)
 	modelName                         string         // the Model choice shown in the Bottom panel
 	modelRows                         []ModelRow     // the last model list shown by /model, in menu order (for /model N)
 	providerName                      string         // the Source name shown in the Bottom panel ("" = none)
@@ -108,7 +110,7 @@ func newModel(ctx context.Context, d Deps, clock func() time.Time) *model {
 		d.Approver.SetAuto(true)
 	}
 	m := &model{d: d, ctx: ctx, clock: clock, tick: spinTick, bgTick: bgTick, ta: ta, cv: newConv(), cur: -1,
-		outBuf: map[int][]byte{}, sc: scrollState{follow: true}, limit: d.Limit, est: true, modelName: d.Model, providerName: d.Provider, thinking: d.Think}
+		outBuf: map[int][]byte{}, sc: scrollState{follow: true}, limit: d.Limit, est: true, modelName: d.Model, providerName: d.Provider, thinking: d.Think, spend: d.Spend}
 	m.resize(defaultCol, 0)
 	m.rebuild(d.History)
 	return m
@@ -241,6 +243,9 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 	case serversMsg:
 		m.onServers(msg)
 		return nil
+	case costMsg:
+		m.onCost(msg)
+		return nil
 	case askGoneMsg:
 		if m.ask != nil && m.ask.reply == msg.reply {
 			m.ask = nil
@@ -321,6 +326,8 @@ func (m *model) onEvents(evs eventsMsg) tea.Cmd {
 			m.modelName = ev.Text
 		case agent.EvProvider:
 			m.providerName = ev.Text
+		case agent.EvSpend:
+			m.spend = ev.Spend
 		case agent.EvThinking:
 			m.thinking = ev.Text == "on"
 		case agent.EvSpeed:
@@ -466,12 +473,20 @@ func (m *model) submit(line string) tea.Cmd {
 		m.skills(c)
 	case KindMCP:
 		m.mcp(c)
+	case KindAgents:
+		m.agentsCmd(c)
+	case KindPrompt:
+		m.promptCmd(c)
 	case KindConfig:
 		if m.d.Config == nil {
 			m.say("settings are not available here")
 		} else {
 			m.openMenu(m.configMenu(), nil)
 		}
+	case KindKeys:
+		m.keysCmd(c)
+	case KindCost:
+		return m.costCmd()
 	default:
 		m.addWaiting(c.Text) // shown at once, before the agent takes it (R-27)
 		m.d.Agent.Submit(c.Text)

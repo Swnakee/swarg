@@ -52,6 +52,7 @@ func TestValidate_UnusedBrokenProviderDoesNotStopTheStart(t *testing.T) {
 }
 
 func TestConfig_Ready(t *testing.T) {
+	isolateUserKeys(t)
 	c := Defaults()
 	c.Providers["bad"] = Provider{Type: "openai", BaseURL: "nope", Model: "m", ContextLimit: 1, MaxTokens: 1}
 	os.Unsetenv("OPENROUTER_API_KEY")

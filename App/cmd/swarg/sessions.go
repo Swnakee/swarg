@@ -128,12 +128,15 @@ type saving struct {
 	withTrace bool
 	history   []chat.Message // the resumed Session's history, for the agent and the UI
 	maxSeq    int
-	thinking  bool        // the resumed Session's last thinking mode
-	model     string      // the resumed Session's last Model choice ("" for a new session)
-	provider  string      // the resumed Session's Source ("" = the configured one)
-	on        bool        // saving is on: a SessionFile is being written
-	store     agent.Store // nil when saving is off
-	trace     agent.Trace // nil when saving or the Trace is off
+	thinking  bool               // the resumed Session's last thinking mode
+	model     string             // the resumed Session's last Model choice ("" for a new session)
+	provider  string             // the resumed Session's Source ("" = the configured one)
+	spend     map[string]float64 // the resumed Session's cost per model (R-111)
+	profile   string             // the resumed Session's prompt profile choice ("" = none, R-118)
+	onProfile func(string)       // called with the prompt profile of a Session the app switches to ("" = none)
+	on        bool               // saving is on: a SessionFile is being written
+	store     agent.Store        // nil when saving is off
+	trace     agent.Trace        // nil when saving or the Trace is off
 
 	mu    sync.Mutex
 	w     *session.Writer // the current SessionFile, nil when saving is off or after close
@@ -156,7 +159,8 @@ func openSaving(dir string, resume session.Info, h session.Header, save, withTra
 		if err != nil {
 			return nil, err
 		}
-		s.history, s.maxSeq, s.prior, s.model, s.thinking, s.provider = l.Messages(), l.MaxSeq(), len(l.Entries), l.Model(), l.Thinking(), l.Provider()
+		s.history, s.maxSeq, s.prior, s.model, s.thinking, s.provider, s.spend = l.Messages(), l.MaxSeq(), len(l.Entries), l.Model(), l.Thinking(), l.Provider(), l.Spend()
+		s.profile = l.Profile()
 	}
 	if !save {
 		return s, nil
@@ -270,22 +274,39 @@ func (s *saving) Open(id string) (ui.Opened, error) {
 	if err != nil {
 		return ui.Opened{}, err
 	}
-	o := ui.Opened{History: l.Messages(), MaxSeq: l.MaxSeq(), Model: l.Model(), Think: l.Thinking(), Title: in.Title}
+	o := ui.Opened{History: l.Messages(), MaxSeq: l.MaxSeq(), Model: l.Model(), Think: l.Thinking(), Spend: l.Spend(), Title: in.Title}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	restore := func() { // the profile choice of the opened Session (R-118)
+		if s.onProfile != nil {
+			s.onProfile(l.Profile())
+		}
+	}
 	if s.w == nil || s.w.Path() == in.Path {
+		restore()
 		return o, nil
 	}
 	w, err := session.Open(in.Path)
 	if err != nil {
 		return ui.Opened{}, err
 	}
+	defer restore()
 	s.closeLocked()
 	s.w, s.fresh, s.prior, s.n = w, false, len(l.Entries), 0
 	if s.withTrace {
 		s.tw = s.openTrace(in.Path, io.Discard) // the UI owns the screen now: no stderr
 	}
 	return o, nil
+}
+
+// RecordProfile writes a prompt profile choice to the current SessionFile (no file: nothing).
+func (s *saving) RecordProfile(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.w == nil {
+		return nil
+	}
+	return s.w.Profile(name)
 }
 
 // Delete removes the saved Session id with its Trace; the Session being written is refused.
@@ -354,6 +375,9 @@ func (x swStore) Provider(name string) error {
 }
 func (x swStore) Thinking(on bool) error {
 	return x.with(func(st *session.Store) error { return st.Thinking(on) })
+}
+func (x swStore) Spend(model string, usd float64) error {
+	return x.with(func(st *session.Store) error { return st.Spend(model, usd) })
 }
 func (x swStore) Flush() error { return x.with(func(st *session.Store) error { return st.Flush() }) }
 

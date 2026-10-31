@@ -104,7 +104,7 @@ func (m *model) openSession(id string) bool {
 		m.note("resume: " + err.Error())
 		return false
 	}
-	if err := ld.Load(o.History, agent.WithMaxSeq(o.MaxSeq), agent.WithModel(o.Model), agent.WithThinking(o.Think)); err != nil {
+	if err := ld.Load(o.History, agent.WithMaxSeq(o.MaxSeq), agent.WithModel(o.Model), agent.WithThinking(o.Think), agent.WithSpend(o.Spend)); err != nil {
 		m.note("resume: " + err.Error())
 		return false
 	}

@@ -31,6 +31,7 @@ const (
 	EvModel    // the Model choice changed (SetModel, Load WithModel): Text = the model id
 	EvProvider // the Source changed (SetSource): Text = the provider name (R-100)
 	EvThinking // the thinking mode changed (SetThinking, Load WithThinking): Text = "on" or "off"
+	EvSpend    // the Session spend changed (a response had a cost, Load WithSpend): Spend = the new total in USD (R-111)
 	EvSpeed    // a Step's stream ended with a measured Generation speed: Speed
 
 	EvTaskStarted // a Task began: Task = its id, Depth, Text = the goal, Call = the `task` call
@@ -53,6 +54,7 @@ type Event struct {
 	CachePct    int               // Meter: share of the last request's prompt served from the server cache
 	HasCache    bool              // Meter: CachePct is known (a usage report has been seen)
 	Breakdown   Breakdown         // Meter: estimated tokens of the next request by category
+	Spend       float64           // Spend: the Session spend in USD
 	Queued      int               // Queue: items waiting (not counting the running one)
 	Spans       int               // CompactStarted: WorkSpans to look at; Compacted: WorkSpans replaced
 	Before      int               // CompactStarted, Compacted: estimated tokens of the next request before the Compaction

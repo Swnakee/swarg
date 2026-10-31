@@ -40,6 +40,8 @@ type Loaded struct {
 	model    string // the last Model choice line; "" = none
 	provider string // the last provider line; "" = none
 	thinking bool   // the last thinking line; false = none or off
+	spend    map[string]float64
+	profile  string // the last prompt profile line; "" = none (R-118)
 }
 
 // MaxSeq is the highest seq the file ever used (also by cleared or compacted messages); the
@@ -64,8 +66,16 @@ func (l Loaded) Provider() string {
 	return l.Header.Provider
 }
 
+// Spend is the cost in USD of the Session so far, per model, summed over the spend lines (R-111);
+// nil for a file with none (written before T13 or on a free server). The caller may keep the map.
+func (l Loaded) Spend() map[string]float64 { return l.spend }
+
 // Thinking is the thinking mode at the end of the Session; a file with no thinking line is off.
 func (l Loaded) Thinking() bool { return l.thinking }
+
+// Profile is the prompt profile the user chose in this Session (the last `prompt` line); "" when
+// the file has none (the config decides, R-116).
+func (l Loaded) Profile() string { return l.profile }
 
 // Messages returns the replayed history (each message carries its Seq).
 func (l Loaded) Messages() []chat.Message {
@@ -167,8 +177,17 @@ func (l *Loaded) apply(r record) error {
 		}
 	case r.Name != "":
 		l.Name = r.Name // the last Name wins; the history is untouched (I-11)
+	case r.Spend != nil:
+		if l.spend == nil {
+			l.spend = map[string]float64{}
+		}
+		if r.Spend.Model != "" && r.Spend.USD > 0 {
+			l.spend[r.Spend.Model] += r.Spend.USD
+		}
 	case r.Think != nil:
 		l.thinking = *r.Think
+	case r.Prompt != "":
+		l.profile = r.Prompt
 	case r.Model != "": // a Model choice (only the header line has V set)
 		l.model = r.Model
 	case r.Provider != "": // a Source switch (R-101)
