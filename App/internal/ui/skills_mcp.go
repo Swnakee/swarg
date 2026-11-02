@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"swarg/internal/agent"
+	"swarg/internal/ui/command"
 )
 
 // ---------------------------------------------------------------------------
@@ -13,7 +14,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // skillLine reads "/<name> [text]" as /skill when <name> is a loaded Skill (a built-in command
-// of that name wins: ParseCommand succeeded before this is asked).
+// of that name wins: command.Parse succeeded before this is asked).
 func (m *model) skillLine(line string) (name, text string, ok bool) {
 	f := strings.Fields(strings.TrimSpace(line))
 	if m.d.Skills == nil || len(f) == 0 || !strings.HasPrefix(f[0], "/") || strings.HasPrefix(f[0], "//") {
@@ -49,7 +50,7 @@ func (m *model) submitSkill(name, text string) {
 }
 
 // skills opens the Skills menu or switches one (applied now, saved to the scope).
-func (m *model) skills(c Command) {
+func (m *model) skills(c command.Command) {
 	if m.d.Skills == nil {
 		m.say("no skills loaded: put a folder with SKILL.md under <config>/skills or .swarg/skills")
 		return
@@ -58,13 +59,8 @@ func (m *model) skills(c Command) {
 		m.openMenu(m.skillsMenu(), nil)
 		return
 	}
-	scope := m.scopeOf(c.Scope)
-	note, err := saved(scope, fmt.Sprintf("skill %s: %s", c.Name, onOff(c.On)), m.d.Skills.SetEnabled(c.Name, c.On, scope))
-	if err != nil {
-		m.say(err.Error())
-		return
-	}
-	m.say(note + " (from the next request)")
+	scope := m.scopeOr(c.Scope, "")
+	m.sayToggle(scope, fmt.Sprintf("skill %s: %s", c.Name, onOff(c.On)), m.d.Skills.SetEnabled(c.Name, c.On, scope))
 }
 
 // ---------------------------------------------------------------------------
@@ -72,7 +68,7 @@ func (m *model) skills(c Command) {
 // ---------------------------------------------------------------------------
 
 // mcp opens the servers menu, one server's tools, or switches / restarts / approves one.
-func (m *model) mcp(c Command) {
+func (m *model) mcp(c command.Command) {
 	if m.d.MCP == nil {
 		m.say("no MCP servers configured (mcp.servers in config.json)")
 		return
@@ -85,24 +81,20 @@ func (m *model) mcp(c Command) {
 			m.openMenu(sub, nil)
 		}
 	case "restart":
-		if err := m.d.MCP.Restart(c.Name); err != nil {
-			m.say("mcp " + c.Name + ": " + err.Error())
-			return
-		}
-		m.say("mcp " + c.Name + ": running (tools offered from the next request)")
+		m.sayMCP(c.Name, m.d.MCP.Restart(c.Name), "running")
 	case "approve":
-		if err := m.d.MCP.Approve(c.Name); err != nil {
-			m.say("mcp " + c.Name + ": " + err.Error())
-			return
-		}
-		m.say("mcp " + c.Name + ": approved and started (tools offered from the next request)")
+		m.sayMCP(c.Name, m.d.MCP.Approve(c.Name), "approved and started")
 	default: // on | off
-		scope := m.scopeOf(c.Scope)
-		note, err := saved(scope, fmt.Sprintf("mcp %s: %s", c.Name, onOff(c.On)), m.d.MCP.SetEnabled(c.Name, c.On, scope))
-		if err != nil {
-			m.say(err.Error())
-			return
-		}
-		m.say(note + " (from the next request)")
+		scope := m.scopeOr(c.Scope, "")
+		m.sayToggle(scope, fmt.Sprintf("mcp %s: %s", c.Name, onOff(c.On)), m.d.MCP.SetEnabled(c.Name, c.On, scope))
 	}
+}
+
+// sayMCP says the outcome of a restart or an approval of one server.
+func (m *model) sayMCP(name string, err error, ok string) {
+	if err != nil {
+		m.say("mcp " + name + ": " + err.Error())
+		return
+	}
+	m.say("mcp " + name + ": " + ok + " (tools offered from the next request)")
 }

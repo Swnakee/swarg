@@ -7,7 +7,10 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"swarg/internal/ui/command"
+	"swarg/internal/ui/hover"
 	"swarg/internal/ui/mdstream"
+	"swarg/internal/ui/menu"
 )
 
 // ---------------------------------------------------------------------------
@@ -22,14 +25,14 @@ var cmdStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(mdstream.Colors.Acc
 // suggestions returns the commands whose name starts with line, in table order; nil unless
 // line is a single "/token" (no blank, not "//"). bottom() cuts the rows to the room above
 // the input box.
-func suggestions(line string) []cmdSpec {
-	line = strings.TrimLeft(line, " \t") // ParseCommand trims too
+func suggestions(line string) []command.Spec {
+	line = strings.TrimLeft(line, " \t") // command.Parse trims too
 	if !strings.HasPrefix(line, "/") || strings.HasPrefix(line, "//") || strings.ContainsAny(line, " \t\n\r") {
 		return nil
 	}
-	var out []cmdSpec
-	for _, c := range commands {
-		if strings.HasPrefix(c.name, line) {
+	var out []command.Spec
+	for _, c := range command.All() {
+		if strings.HasPrefix(c.Name, line) {
 			out = append(out, c)
 		}
 	}
@@ -44,7 +47,7 @@ func isCommandLine(line string) bool {
 		return true
 	}
 	f := strings.Fields(line)
-	return len(f) > 0 && strings.HasPrefix(line, "/") && lookup(f[0]) != nil
+	return len(f) > 0 && strings.HasPrefix(line, "/") && command.Lookup(f[0]) != nil
 }
 
 // suggestRoom is how many extra rows fit above the input box (bottom() keeps one list row).
@@ -54,7 +57,7 @@ func (m *model) suggestRoom() int {
 
 // current returns the suggestions that fit on screen and the selected one, clamped (a row the
 // user cannot see is never selected or completed).
-func (m *model) current() ([]cmdSpec, int) {
+func (m *model) current() ([]command.Spec, int) {
 	s := suggestions(m.ta.Value())
 	if n := m.suggestRoom(); len(s) > n {
 		s = s[:n]
@@ -77,19 +80,19 @@ func (m *model) suggesting() bool {
 
 // suggestRows renders the suggestion rows (name and arguments, then the description), the
 // selected one highlighted, and the hotspots cmd:<i> of each row (y relative to the first).
-func (m *model) suggestRows(w int) (rows []string, hot []hotspot) {
+func (m *model) suggestRows(w int) (rows []string, hot []hover.Spot) {
 	s, sel := m.current()
 	names := make([]string, len(s))
 	nw := 0
 	for i, c := range s {
-		names[i] = strings.TrimSpace(c.name + " " + c.args)
+		names[i] = strings.TrimSpace(c.Name + " " + c.Args)
 		nw = max(nw, lipgloss.Width(names[i]))
 	}
 	for i, c := range s {
-		text := ansi.Truncate(fmt.Sprintf("  %-*s  %s", nw, names[i], c.desc), w, "…")
-		hot = append(hot, hotspot{id: fmt.Sprintf("cmd:%d", i), y: i, x0: 0, x1: lipgloss.Width(text)})
+		text := ansi.Truncate(fmt.Sprintf("  %-*s  %s", nw, names[i], c.Desc), w, "…")
+		hot = append(hot, hover.Spot{ID: fmt.Sprintf("cmd:%d", i), Y: i, X0: 0, X1: lipgloss.Width(text)})
 		if i == sel {
-			text = pickSel.Render(text + strings.Repeat(" ", max(w-lipgloss.Width(text), 0)))
+			text = menu.Sel.Render(text + strings.Repeat(" ", max(w-lipgloss.Width(text), 0)))
 		}
 		rows = append(rows, text)
 	}
@@ -112,8 +115,8 @@ func (m *model) completeSuggestion(i int) {
 	if i < 0 || i >= len(s) {
 		return
 	}
-	v := s[i].name
-	if s[i].args != "" {
+	v := s[i].Name
+	if s[i].Args != "" {
 		v += " "
 	}
 	m.ta.SetValue(v)

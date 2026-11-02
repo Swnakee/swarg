@@ -1,0 +1,53 @@
+diff -ruN a/jobs/catalog.py ref/jobs/catalog.py
+--- a/jobs/catalog.py	2026-11-01 03:45:12
++++ ref/jobs/catalog.py	2026-11-01 03:45:12
+@@ -18,5 +18,5 @@
+         for row in csv.DictReader(f):
+             disc = row["discount_pct"].strip()
+             products.append(Product(row["sku"].strip(), Decimal(row["price"].strip()),
+-                                    row["currency"], Decimal(disc) if disc else Decimal(0)))
++                                    row["currency"].strip().upper(), Decimal(disc) if disc else Decimal(0)))
+     return products
+diff -ruN a/jobs/fx.py ref/jobs/fx.py
+--- a/jobs/fx.py	2026-11-01 03:45:12
++++ ref/jobs/fx.py	2026-11-01 03:45:12
+@@ -2,7 +2,6 @@
+ import os
+ from decimal import Decimal
+ 
+-from .log import log
+ 
+ 
+ def load_rates(data_dir):
+@@ -15,6 +14,4 @@
+     if currency == "EUR":
+         return Decimal(1)
+     rate = rates.get(currency, Decimal(0))
+-    if rate == 0:
+-        log("INFO", "fx: using fallback rate for %s" % currency)
+-    return rate
++    return rate if rate > 0 else None
+diff -ruN a/jobs/money.py ref/jobs/money.py
+--- a/jobs/money.py	2026-11-01 03:45:12
++++ ref/jobs/money.py	2026-11-01 03:45:12
+@@ -1,6 +1,6 @@
+-from decimal import Decimal
++from decimal import ROUND_HALF_UP, Decimal
+ 
+ 
+ def to_cents(eur):
+     """Whole cents from an amount in EUR."""
+-    return int(round(eur * 100))
++    return int((eur * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+diff -ruN a/jobs/pricing.py ref/jobs/pricing.py
+--- a/jobs/pricing.py	2026-11-01 03:45:12
++++ ref/jobs/pricing.py	2026-11-01 03:45:12
+@@ -8,6 +8,8 @@
+ def price_one(p, rates):
+     """Price of one product in EUR cents, or None when there is no usable rate."""
+     rate = get_rate(rates, p.currency)
++    if rate is None:
++        return None
+     net = p.price * (100 - p.discount_pct) / 100
+     return to_cents(net / rate)
+ 

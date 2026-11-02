@@ -35,9 +35,14 @@ func Delete(dir, id string) error {
 	case len(match) > 1:
 		return fmt.Errorf("session: id %q matches %d sessions", id, len(match))
 	}
+	return removeWithTrace(match[0])
+}
+
+// removeWithTrace deletes the SessionFile p and its Trace; a file that is already gone is fine.
+func removeWithTrace(p string) error {
 	var errs []error
-	for _, p := range []string{match[0], TracePath(match[0])} {
-		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+	for _, f := range []string{p, TracePath(p)} {
+		if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err)
 		}
 	}

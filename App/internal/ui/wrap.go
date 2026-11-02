@@ -60,9 +60,6 @@ func wrapRowK(s string, w int, marks bool) []string {
 	return parts
 }
 
-// wrapRows wraps every row of rows.
-func wrapRows(rows []string, w int) []string { return wrapRowsK(rows, w, false) }
-
 func wrapRowsK(rows []string, w int, marks bool) []string {
 	out := make([]string, 0, len(rows))
 	for _, r := range rows {
@@ -107,10 +104,7 @@ func wrapTextK(text string, w int, marks bool) []string {
 	return out
 }
 
-// splitRows splits rendered multi-line text into rows and wraps them to w cells.
-func splitRows(s string, w int) []string { return wrapRows(strings.Split(s, "\n"), w) }
-
-// splitRowsS is splitRows with continuation rows marked.
+// splitRowsS splits rendered multi-line text into rows and wraps them to w cells, marking continuation rows.
 func splitRowsS(s string, w int) []string { return wrapRowsK(strings.Split(s, "\n"), w, true) }
 
 // popMark removes a soft-wrap mark from row and returns the cleaned row and its kind.

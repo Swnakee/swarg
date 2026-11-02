@@ -24,6 +24,8 @@ type loadItem struct {
 	think    *bool  // WithThinking; nil = keep the thinking mode
 	spend    map[string]float64
 	setSpend bool // WithSpend was given
+	tok      Tokens
+	setTok   bool // WithTokens was given
 }
 
 // LoadOption tunes Load.
@@ -53,15 +55,7 @@ func (a *Agent) Load(history []chat.Message, opts ...LoadOption) error {
 	for _, o := range opts {
 		o(ld)
 	}
-	a.mu.Lock()
-	if a.stopped {
-		a.mu.Unlock()
-		return ErrStopped
-	}
-	a.queue = append(a.queue, qitem{load: ld})
-	a.mu.Unlock()
-	signal(a.wake)
-	return nil
+	return a.enqueueControl(qitem{load: ld})
 }
 
 // runLoad performs the Load at the head of the queue; worker only, between Turns. The item
@@ -83,7 +77,10 @@ func (a *Agent) runLoad(ld *loadItem) {
 	if ld.setSpend {
 		a.setSpendLocked(ld.spend)
 	}
-	total := a.spend.total()
+	if ld.setTok {
+		a.spend.tok = ld.tok
+	}
+	total, all := a.spend.total(), a.spend.tok.Total()
 	ev, _ := a.meterEvent()
 	a.traceLocked("load", map[string]any{"messages": len(a.history), "repaired": repaired, "seq": a.seq, "model": a.model})
 	a.mu.Unlock()
@@ -94,14 +91,11 @@ func (a *Agent) runLoad(ld *loadItem) {
 	if thinkChanged {
 		a.emit(thinkEvent(*ld.think))
 	}
-	if ld.setSpend {
-		a.emit(Event{Kind: EvSpend, Spend: total})
+	if ld.setSpend || ld.setTok {
+		a.emit(Event{Kind: EvSpend, Spend: total, Tokens: all})
 	}
 	a.sync()
-	a.mu.Lock()
-	a.queue = a.queue[1:] // only now: Busy and Wait cover the Store and Trace calls of the Load
-	a.idle.Broadcast()
-	a.mu.Unlock()
+	a.popControl() // only now: Busy and Wait cover the Store and Trace calls of the Load
 }
 
 // applyLoadLocked installs the history and returns the number of repaired calls. Caller holds mu.
@@ -119,15 +113,19 @@ func (a *Agent) applyLoadLocked(ld *loadItem) int {
 	}
 	a.callSeq = 0
 	answered := map[string]bool{}
+	noteID := func(id string) { // restores the call counter from call_N ids
+		if sub := callIDRe.FindStringSubmatch(id); sub != nil {
+			n, _ := strconv.Atoi(sub[1])
+			a.callSeq = max(a.callSeq, n)
+		}
+	}
 	for _, m := range h {
 		if m.Role == chat.RoleTool {
 			answered[m.ToolCallID] = true
 		}
-		for _, id := range append([]string{m.ToolCallID}, callIDs(m.ToolCalls)...) {
-			if sub := callIDRe.FindStringSubmatch(id); sub != nil {
-				n, _ := strconv.Atoi(sub[1])
-				a.callSeq = max(a.callSeq, n)
-			}
+		noteID(m.ToolCallID)
+		for _, c := range m.ToolCalls {
+			noteID(c.ID)
 		}
 	}
 	var rep []chat.Message
@@ -153,11 +151,4 @@ func (a *Agent) applyLoadLocked(ld *loadItem) int {
 		a.storeLocked(func(s Store) error { return s.Repair(rep) })
 	}
 	return len(rep)
-}
-
-func callIDs(cs []chat.ToolCall) (out []string) {
-	for _, c := range cs {
-		out = append(out, c.ID)
-	}
-	return out
 }

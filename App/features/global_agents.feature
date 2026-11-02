@@ -51,4 +51,4 @@ Feature: Global agent types
     @S-729
     Scenario: The OpenRouter preset defaults to standard and local presets stay compact
       When the default config is read
-      Then the Profile of the Source "openrouter" is "standard" and of the Source "local" is "compact"
+      Then the Profile of the Source "openrouter" is "medium" and of the Source "local" is "low"

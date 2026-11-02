@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"swarg/internal/webget"
 )
 
 // ddgPage imitates html.duckduckgo.com/html/ (layout recorded by hand: redirect links in
@@ -35,7 +37,7 @@ func TestWebSearch_DuckDuckGoNumberedResults(t *testing.T) {
 		fmt.Fprint(w, ddgPage)
 	}))
 	defer srv.Close()
-	res, err := search(Env{Web: Web{SearchURL: srv.URL}}, "go os root")
+	res, err := search(Env{Web: webget.Getter{SearchURL: srv.URL}}, "go os root")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +58,7 @@ func TestWebSearch_AtMostEightAndSnippetClipped(t *testing.T) {
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, b.String()) }))
 	defer srv.Close()
-	res, err := search(Env{Web: Web{SearchURL: srv.URL}}, "q")
+	res, err := search(Env{Web: webget.Getter{SearchURL: srv.URL}}, "q")
 	if err != nil || res.Brief != "8 results" || strings.Contains(res.Output, "9. ") || strings.Contains(res.Output, strings.Repeat("w", 300)) {
 		t.Errorf("%v brief %q len %d", err, res.Brief, len(res.Output))
 	}
@@ -71,7 +73,7 @@ func TestWebSearch_NoResultsAndBlocked(t *testing.T) {
 		fmt.Fprint(w, "<html><body>No results.</body></html>")
 	}))
 	defer srv.Close()
-	env := Env{Web: Web{SearchURL: srv.URL}}
+	env := Env{Web: webget.Getter{SearchURL: srv.URL}}
 	if res, err := search(env, "zzz"); err != nil || res.Output != "no results" {
 		t.Errorf("no results: %q %v", res.Output, err)
 	}
@@ -87,7 +89,7 @@ func TestWebSearch_SearxJSON(t *testing.T) {
 		fmt.Fprint(w, `{"results":[{"title":"Hit  one","url":"https://a.org/1","content":"first\nsnippet"},{"title":"Two","url":"https://b.org/2","content":""}]}`)
 	}))
 	defer srv.Close()
-	res, err := search(Env{Web: Web{SearxURL: srv.URL + "/"}}, "x y")
+	res, err := search(Env{Web: webget.Getter{SearxURL: srv.URL + "/"}}, "x y")
 	want := "1. Hit one\n   https://a.org/1\n   first snippet\n2. Two\n   https://b.org/2"
 	if err != nil || res.Output != want {
 		t.Errorf("got %q %v", res.Output, err)
@@ -100,7 +102,7 @@ func TestWebSearch_SearxJSON(t *testing.T) {
 func TestWebSearch_SearxNotJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "<html>") }))
 	defer srv.Close()
-	if _, err := search(Env{Web: Web{SearxURL: srv.URL}}, "q"); err == nil || !strings.Contains(err.Error(), "format=json") {
+	if _, err := search(Env{Web: webget.Getter{SearxURL: srv.URL}}, "q"); err == nil || !strings.Contains(err.Error(), "format=json") {
 		t.Errorf("got %v", err)
 	}
 }

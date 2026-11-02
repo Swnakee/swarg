@@ -42,7 +42,7 @@ const errorPrefix = "error:"
 
 // Stub returns the history stub of a finished call, or "" (unknown tool, error result, tool
 // without a policy, panic, or a stub that would not be shorter than the output).
-func (s *Set) Stub(name string, args json.RawMessage, output, brief string) (stub string) {
+func (s *Set) Stub(name string, args json.RawMessage, output, brief string) string {
 	t, ok := s.Get(name)
 	if !ok || strings.HasPrefix(output, errorPrefix) {
 		return ""
@@ -51,12 +51,7 @@ func (s *Set) Stub(name string, args json.RawMessage, output, brief string) (stu
 	if !ok {
 		return ""
 	}
-	defer func() {
-		if recover() != nil {
-			stub = ""
-		}
-	}()
-	stub = st.Stub(args, Result{Output: output, Brief: brief})
+	stub := guard(func() string { return st.Stub(args, Result{Output: output, Brief: brief}) })
 	if len(stub) >= len(output) {
 		return ""
 	}
@@ -64,7 +59,7 @@ func (s *Set) Stub(name string, args json.RawMessage, output, brief string) (stu
 }
 
 // Touched returns the path a file-changing tool touched, or "".
-func (s *Set) Touched(name string, args json.RawMessage) (path string) {
+func (s *Set) Touched(name string, args json.RawMessage) string {
 	t, ok := s.Get(name)
 	if !ok {
 		return ""
@@ -73,12 +68,7 @@ func (s *Set) Touched(name string, args json.RawMessage) (path string) {
 	if !ok {
 		return ""
 	}
-	defer func() {
-		if recover() != nil {
-			path = ""
-		}
-	}()
-	return tc.Touched(args)
+	return guard(func() string { return tc.Touched(args) })
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +152,16 @@ func (WriteFile) Touched(args json.RawMessage) string { return touchedPath(args)
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// guard returns f(), or "" when f panics.
+func guard(f func() string) (s string) {
+	defer func() {
+		if recover() != nil {
+			s = ""
+		}
+	}()
+	return f()
+}
 
 // touchedPath is the cleaned path of the args; absolute paths stay absolute.
 func touchedPath(args json.RawMessage) string {

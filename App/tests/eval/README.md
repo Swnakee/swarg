@@ -41,7 +41,7 @@ Output: `Export/eval/<timestamp>-<model>[-<variant>]/`
         config.json  optional: the task's own swarg settings (skills, mcp servers), merged over the base config
 
 Categories: `edit`, `multistep`, `shell`, `context`, `long`, `robust`, `language`, `code`,
-`web`, `skill`, `mcp`, `mcp-http`, `combo` (the category is the prefix before the first `-nn-`). `skill` (T8 S): the
+`web`, `skill`, `mcp`, `mcp-http`, `combo`, `hard` (the category is the prefix before the first `-nn-`). `skill` (T8 S): the
 model picks a project Skill by itself, applies one on `/skill <name>`, cannot apply a disabled one.
 `mcp` (T8 M): a fact known only to the demo MCP server (`mcp/mcp_demo.py`, reached from the fixture
 through a symlink `tools/mcp_demo.py`), a server that fails to start, a disabled server. `mcp-http`
@@ -49,7 +49,11 @@ through a symlink `tools/mcp_demo.py`), a server that fails to start, a disabled
 `mcp.test` on the sandbox network (`SWARG_MCP_DIR`, set by `run.sh` for these tasks; the token reaches
 the agent as `MCP_TOKEN`): a working server by URL, a server without the token (401), a URL nobody
 answers. `combo`:
-web + skill + MCP in one job. `code` (T7) holds realistic jobs: a failing
+web + skill + MCP in one job. `hard` (12 tasks, `hard-01..12`) separates strong from weak models: hidden-test checks on interval sets, an
+expression parser, billing bugs, a performance fix, cache/paging state bugs, a CSV migration with rejects, a 3-turn rate limiter, a
+long spec with amendments, a crash whose cause is elsewhere, writing tests that kill seeded mutants, a CLI spec and a rename/split
+refactor; each task folder also holds `solution.patch` (reference solution, never copied to the agent; `eval.py prep` copies only
+`fixture/`). `code` (T7) holds realistic jobs: a failing
 suite, a feature across files, a refactor, a CLI with own tests, a stack trace, a 25-file repo, a
 250-line CSS, a git flow, a site with login and self-written checks, a JSON-lines tool process.
 
@@ -77,6 +81,12 @@ pass/fail + reason; user turns; steps (`request` records); tool calls (`tool_sta
 (`tool_end` with `error`); denied calls (`approval` with `allow:false`); prompt/completion tokens and
 cache % (`usage` records: `cached/prompt`); compactions (`compact`); loop-guard hits (`loop_guard`);
 wall time of the agent turns + trace. Without a trace (build older than sessions) counters are 0.
+
+## Two lanes
+
+- `SWARG_LANE=<a-z0-9>` gives a run its own containers, network, image tag, lock and fixture links,
+  so one cloud run (OpenRouter) can go next to one local run. Never run two lanes against the same
+  single-lane model server (the Mac mlx server, one Ollama box): local runs stay sequential.
 
 ## Known limitations
 

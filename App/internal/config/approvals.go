@@ -63,14 +63,7 @@ func (a *Approvals) put(project, key, value string) error {
 		a.m[project] = map[string]string{}
 	}
 	a.m[project][key] = value
-	out, err := json.MarshalIndent(a.m, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(a.path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(a.path, append(out, '\n'), 0o600)
+	return writeJSON(a.path, a.m)
 }
 
 // hashServer fingerprints a server entry (command, args, env names, url, headers names...).

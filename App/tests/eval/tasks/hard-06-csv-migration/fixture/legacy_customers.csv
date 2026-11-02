@@ -1,0 +1,41 @@
+﻿id,name,email,phone,country,signup,balance,tags
+1000,Carla Díaz, U0@example.com ,+1 (555) 000-1111,us,2024-02-29,,one
+1001,Carla Díaz, U0@example.com ,+1 (555) 000-1111,Germany,08/16/2004,12.345,Mix|ed;Case
+ 1002 ,Eve O'Neil, U2@example.com ,1 555 123 4567,FR,31.12.1990,-0.005,Z;z;Z
+1003,Anna  Lee,u3@test.example.net,555.123.4567,us,17.11.2018,$(5.25),a|b|A
+x4,Eve O'Neil,u4@test.example.net,,Germany,01/31/2021,999999999.99,a|b|A
+1005,Frank  Müller,u5@Example.COM,,U.S.,01/31/2021, 7.1 ,
+1006,Anna  Lee,u6@Example.COM,00 49 30 1234567,UA,2006-01-27,1.2.3, x ; y ;; 
+1006,Carla Díaz,u7@Example.COM,0044 20 7946 0958, gb ,31.12.1990,0.005,
+1006, bob  smith ,u8@mail.example.org,+1 (555) 000-1111,US,31.12.1990,999999999.99,one
+1009,Frank  Müller,u9@test.example.net,+1-555-123-4567 ,DE,24.01.2017,-0.005,
+1010,dmitri ivanov,u10@@x.com,+44 20 7946 0958,Deutschland,01/31/2021,-12.345,
+1011,dmitri ivanov, U11@test.example.net ,+49 30 1234567,Canada,01/06/2008,"1,000",Mix|ed;Case
+1012,dmitri ivanov, U12@mail.example.org ,00 49 30 1234567,FR,2024-02-29,"€ 1,000",Z;z;Z
+1013, bob  smith ,u13@test.example.net,+1 (555) 000-1111,XX,01/31/2021,12,Z;z;Z
+1014,Carla Díaz, U14@example.com ,12345,US,01/31/2021,5.,Mix|ed;Case
+ 1015 , bob  smith , U15@example.com ,00 49 30 1234567,United States,2025-05-23,"€ 1,000",
+1009,Carla Díaz,u16@mail.example.org,+1-555-123-4567 ,us,2024-02-29,0.005,one
+1017,Carla Díaz,sp ace@x.com,+1234567,USA,05/02/2014,"1,000",a|b|A
+1018,Anna  Lee, U18@example.com ,+1234567,FR,yesterday,"1,234.50",
+ 1019 , bob  smith , U19@Example.COM ,00 49 30 1234567,Deutschland,31.12.1990,"1,23",Mix|ed;Case
+1020,Frank  Müller, U20@Example.COM ,,DE,1989-12-31,(0.015),a|b|A
+1021,Carla Díaz,u21@a.b.c.,+1-555-123-4567 ,,01/31/2021,"1,000", x ; y ;; 
+1022,Carla Díaz,u22@test.example.net,+49 30 1234567,USA,31.12.1990,12.355,one
+1023,Carla Díaz, U23@Example.COM ,1 555 123 4567,FR,2024-02-29,"1,000", x ; y ;; 
+1024,Anna  Lee, U24@test.example.net ,555-123-4567,US,2023-02-26,12,vip;Beta
+1025,Anna  Lee, U25@Example.COM ,+1 (555) 000-1111,CA,2010/08/05,$12, x ; y ;; 
+ 1026 , bob  smith , U26@example.com ,,Deutschland,07.05.2005,12.355,a|b|A
+1027, bob  smith ,u27@test.example.net,+1-555-123-4567 ,USA,31/12/2020,(0.015),a|b|A
+1028,Eve O'Neil, U28@mail.example.org ,1 555 123 4567,Canada,06/10/2018,"1,000", x ; y ;; 
+1029,Carla Díaz, U29@Example.COM ,00 49 30 1234567,FR,31.12.1990, 7.1 ,Z;z;Z
+1012,dmitri ivanov,u30@example.com,555.123.4567,US,01/31/2021,12.355,Mix|ed;Case
+1031,   , U31@test.example.net ,0044 20 7946 0958,Great Britain,31.12.1990,12,a|b|A
+ 1032 , bob  smith , U32@test.example.net ,+44 20 7946 0958,USA,2026-01-01,999999999.99,Z;z;Z
+1033,Eve O'Neil, U33@Example.COM ,0044 20 7946 0958,U.S.,01/31/2021,$(5.25),a|b|A
+1034,Anna  Lee, U34@Example.COM ,555-123-4567,United States,06.09.2019,999999999.99,a|b|A
+ 1035 ,Frank  Müller, U35@example.com ,(555) 123-4567,US,01.10.1993,0.005,one
+1036,Frank  Müller,u36@example.com,+123456789012345678,Great Britain,03/08/2014,"1,000", x ; y ;; 
+1037, bob  smith ,u37@@x.com,1 555 123 4567,UA,01/31/2021,"1,234.50",Mix|ed;Case
+0,Eve O'Neil,u38@test.example.net,0044 20 7946 0958,US,2024-01-17,$12, x ; y ;; 
+0,Frank  Müller, U39@Example.COM ,0044 20 7946 0958,DE,01/31/2021, 7.1 , x ; y ;; 

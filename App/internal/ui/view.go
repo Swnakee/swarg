@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"swarg/internal/chat"
+	"swarg/internal/ui/hover"
 	"swarg/internal/ui/mdstream"
 )
 
@@ -56,7 +57,7 @@ type bottomArea struct {
 	extra  []string
 	box    []string
 	status string
-	hot    []hotspot
+	hot    []hover.Spot
 }
 
 func (b bottomArea) height() int { return len(b.extra) + len(b.box) + 1 }
@@ -102,7 +103,7 @@ func (m *model) bottom() bottomArea {
 		extra = extra[:room]
 	}
 	b.extra = extra
-	b.hot = slices.DeleteFunc(b.hot, func(s hotspot) bool { return s.y >= len(extra) })
+	b.hot = slices.DeleteFunc(b.hot, func(s hover.Spot) bool { return s.Y >= len(extra) })
 	return b
 }
 
@@ -129,7 +130,7 @@ func (m *model) View() tea.View {
 // clickable element registers its cells on the way (hover.add) and the spots under the
 // pointer are underlined at the end (not while the button is held: a drag is a selection).
 func (m *model) screen() screen {
-	m.hv.begin()
+	m.hv.Begin()
 	h := m.rowsHeight()
 	if m.tooSmall() {
 		rows := make([]string, h)
@@ -140,9 +141,8 @@ func (m *model) screen() screen {
 	listH := h - b.height()
 	var rows []string
 	if m.pick != nil { // the session picker takes the list area
-		m.pick.w, m.pick.h = m.width, listH
-		m.pick.scroll()
-		rows = m.pick.lines()
+		m.pick.Resize(m.width, listH)
+		rows = m.pick.Lines()
 	} else {
 		rows = m.listRows(listH)
 	}
@@ -150,7 +150,7 @@ func (m *model) screen() screen {
 		rows = append(rows, "")
 	}
 	for _, s := range b.hot {
-		m.hv.add(s.id, listH+s.y, s.x0, s.x1)
+		m.hv.Add(s.ID, listH+s.Y, s.X0, s.X1)
 	}
 	boxTop := len(rows) + len(b.extra)
 	rows = append(append(append(rows, b.extra...), b.box...), b.status)
@@ -160,7 +160,7 @@ func (m *model) screen() screen {
 	}
 	m.hotPanel(len(rows) - 1)
 	if !m.pr.down {
-		applyHover(&m.hv, rows)
+		m.hv.Apply(rows)
 	}
 	return screen{rows: rows, cursor: c}
 }
@@ -218,7 +218,7 @@ func (m *model) hotHeads(rows []string, y0 int, skip int) {
 			continue
 		}
 		if idx, _, head, ok := m.cv.rowAt(y0 + i); ok && head {
-			m.hv.add(fmt.Sprintf("tool:%d", idx), i, m.cv.items[idx].depth*gw, ansi.StringWidth(row))
+			m.hv.Add(fmt.Sprintf("tool:%d", idx), i, m.cv.items[idx].depth*gw, ansi.StringWidth(row))
 		}
 	}
 }

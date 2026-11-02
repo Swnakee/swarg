@@ -1,0 +1,2 @@
+Implement an interval-set library with open/closed bounds from a README spec.
+I need intervals.py finished: README.md describes what parse, format, merge, intersect and subtract must do, and tests/test_basic.py has a few examples. Please implement everything in intervals.py (the stubs raise NotImplementedError) and make sure the edge cases from the README are handled, not only the examples. Run the tests when you are done.

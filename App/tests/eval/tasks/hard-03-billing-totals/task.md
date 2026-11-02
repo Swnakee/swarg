@@ -1,0 +1,2 @@
+Find why invoice totals are wrong for some customers (several independent bugs in a billing package).
+Our finance team says the invoice totals are off for some customers, a few cents here, bigger amounts there, and the per-customer report doesn't add up either. I can't tell you more than that. RULES.md in the repo is the official billing policy. Please find what is wrong in the billing package and fix it so the code follows the policy. Don't change RULES.md.

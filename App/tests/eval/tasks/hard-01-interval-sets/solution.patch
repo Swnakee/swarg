@@ -1,0 +1,106 @@
+diff -ruN a/intervals.py ref/intervals.py
+--- a/intervals.py	2026-11-01 03:32:53
++++ ref/intervals.py	2026-11-01 03:32:52
+@@ -18,24 +18,96 @@
+             object.__setattr__(self, "hi_closed", False)
+ 
+     def is_empty(self) -> bool:
+-        raise NotImplementedError
++        return self.lo > self.hi or (self.lo == self.hi and not (self.lo_closed and self.hi_closed))
+ 
+ 
++def _num(s):
++    s = s.strip()
++    if s in ("inf", "+inf"):
++        return INF
++    if s == "-inf":
++        return -INF
++    if "." in s:
++        return float(s)
++    return int(s)
++
++
+ def parse(text):
+-    raise NotImplementedError
++    t = text.strip()
++    if len(t) < 5 or t[0] not in "[(" or t[-1] not in "])":
++        raise ValueError("bad interval: %r" % text)
++    parts = t[1:-1].split(",")
++    if len(parts) != 2:
++        raise ValueError("bad interval: %r" % text)
++    try:
++        lo, hi = _num(parts[0]), _num(parts[1])
++    except ValueError:
++        raise ValueError("bad number in %r" % text)
++    return Interval(lo, hi, t[0] == "[", t[-1] == "]")
+ 
+ 
++def _n(v):
++    if v == INF:
++        return "inf"
++    if v == -INF:
++        return "-inf"
++    return str(v)
++
++
+ def format(interval):
+-    raise NotImplementedError
++    if interval.is_empty():
++        return "empty"
++    return "%s%s,%s%s" % ("[" if interval.lo_closed else "(", _n(interval.lo),
++                          _n(interval.hi), "]" if interval.hi_closed else ")")
+ 
+ 
+ def merge(intervals):
+-    raise NotImplementedError
++    items = sorted((i for i in intervals if not i.is_empty()), key=lambda i: (i.lo, not i.lo_closed))
++    out = []
++    for i in items:
++        if out:
++            c = out[-1]
++            if i.lo < c.hi or (i.lo == c.hi and (c.hi_closed or i.lo_closed)):
++                if i.hi > c.hi:
++                    out[-1] = Interval(c.lo, i.hi, c.lo_closed, i.hi_closed)
++                elif i.hi == c.hi and i.hi_closed and not c.hi_closed:
++                    out[-1] = Interval(c.lo, c.hi, c.lo_closed, True)
++                continue
++        out.append(i)
++    return out
+ 
+ 
++def _cap(x, y):
++    if (x.lo, not x.lo_closed) >= (y.lo, not y.lo_closed):
++        lo, lc = x.lo, x.lo_closed and (y.lo != x.lo or y.lo_closed)
++    else:
++        lo, lc = y.lo, y.lo_closed
++    if (x.hi, x.hi_closed) <= (y.hi, y.hi_closed):
++        hi, hc = x.hi, x.hi_closed and (y.hi != x.hi or y.hi_closed)
++    else:
++        hi, hc = y.hi, y.hi_closed
++    return Interval(lo, hi, lc, hc)
++
++
+ def intersect(a, b):
+-    raise NotImplementedError
++    out = []
++    for x in merge(a):
++        for y in merge(b):
++            c = _cap(x, y)
++            if not c.is_empty():
++                out.append(c)
++    return merge(out)
+ 
+ 
+ def subtract(a, b):
+-    raise NotImplementedError
++    pieces = merge(a)
++    for cut in merge(b):
++        new = []
++        for p in pieces:
++            if _cap(p, cut).is_empty():
++                new.append(p)
++                continue
++            new.append(Interval(p.lo, cut.lo, p.lo_closed, not cut.lo_closed))
++            new.append(Interval(cut.hi, p.hi, not cut.hi_closed, p.hi_closed))
++        pieces = [p for p in new if not p.is_empty()]
++    return merge(pieces)

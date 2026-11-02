@@ -11,6 +11,7 @@ import (
 
 	"swarg/internal/agent"
 	"swarg/internal/chat"
+	"swarg/internal/ui/command"
 )
 
 // ---------------------------------------------------------------------------
@@ -106,21 +107,21 @@ func sampleHistory() []chat.Message {
 // ---------------------------------------------------------------------------
 
 func TestParseCommand_SessionCommands(t *testing.T) {
-	for line, want := range map[string]Command{
-		"/compact": {Kind: KindCompact}, "/sessions": {Kind: KindSessions},
-		"/context": {Kind: KindContext}, " /resume ": {Kind: KindSessions},
-		"/rename  api   work ": {Kind: KindRename, Name: "api work"},
+	for line, want := range map[string]command.Command{
+		"/compact": {Kind: command.KindCompact}, "/sessions": {Kind: command.KindSessions},
+		"/context": {Kind: command.KindContext}, " /resume ": {Kind: command.KindSessions},
+		"/rename  api   work ": {Kind: command.KindRename, Name: "api work"},
 	} {
-		if got, err := ParseCommand(line); err != nil || got != want {
-			t.Errorf("ParseCommand(%q) = %+v, %v; want %+v", line, got, err, want)
+		if got, err := command.Parse(line); err != nil || got != want {
+			t.Errorf("command.Parse(%q) = %+v, %v; want %+v", line, got, err, want)
 		}
 	}
 	for line, part := range map[string]string{
 		"/resume 1": "usage: /resume", "/compact x": "usage: /compact", "/sessions 1": "usage: /sessions",
 		"/context x": "usage: /context", "/rename": "usage: /rename <name>", "/zzz": "unknown command /zzz (see /help)",
 	} {
-		if _, err := ParseCommand(line); err == nil || !strings.Contains(err.Error(), part) {
-			t.Errorf("ParseCommand(%q) error = %v, want containing %q", line, err, part)
+		if _, err := command.Parse(line); err == nil || !strings.Contains(err.Error(), part) {
+			t.Errorf("command.Parse(%q) error = %v, want containing %q", line, err, part)
 		}
 	}
 }
@@ -232,8 +233,8 @@ func TestOpenSession_RebuildsList(t *testing.T) {
 	if len(ss.loads) != 1 || ss.loads[0] != "old" || len(ag.loaded) != 1 || len(ag.loaded[0]) != 7 {
 		t.Fatalf("loads %v, agent loads %d", ss.loads, len(ag.loaded))
 	}
-	if ag.loadOpts != 4 {
-		t.Errorf("Load got %d options, want WithMaxSeq, WithModel, WithThinking and WithSpend", ag.loadOpts)
+	if ag.loadOpts != 5 {
+		t.Errorf("Load got %d options, want WithMaxSeq, WithModel, WithThinking, WithSpend and WithTokens", ag.loadOpts)
 	}
 	text := r.convText()
 	for _, want := range []string{"read a.go", "sure", "read_file(a.go)  #1", "read 1 line", "shell(false)  #2",

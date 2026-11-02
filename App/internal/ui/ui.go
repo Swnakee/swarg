@@ -15,6 +15,9 @@ import (
 
 	"swarg/internal/agent"
 	"swarg/internal/chat"
+	"swarg/internal/ui/command"
+	"swarg/internal/ui/hover"
+	"swarg/internal/ui/menu"
 )
 
 // ---------------------------------------------------------------------------
@@ -68,18 +71,19 @@ type model struct {
 	ask                               *askMsg // pending confirmation
 	askSince                          time.Time
 	sc                                scrollState
-	sel                               selection // the highlighted text (content coordinates)
-	pr                                press     // the left button, while held
-	hv                                hover     // the pointer and the clickable spans of the last draw
-	pick                              *menu     // the open menu (session picker, /skills, /mcp, ...) while there is one
-	suggSel                           int       // the selected command suggestion
-	typed                             string    // the input at the last update (a change resets suggSel)
-	copyNote                          string    // "copied N lines", shown in the status line
-	bgRunning                         int       // running background jobs
+	sel                               selection   // the highlighted text (content coordinates)
+	pr                                press       // the left button, while held
+	hv                                hover.Hover // the pointer and the clickable spans of the last draw
+	pick                              *menu.Menu  // the open menu (session picker, /skills, /mcp, ...) while there is one
+	suggSel                           int         // the selected command suggestion
+	typed                             string      // the input at the last update (a change resets suggSel)
+	copyNote                          string      // "copied N lines", shown in the status line
+	bgRunning                         int         // running background jobs
 	bgTicking                         bool
 	bgTick                            func() tea.Cmd // job refresh timer; a field so tests need no timer
 	waiting                           []string       // Waiting Messages: sent, not taken by the agent yet (oldest first)
 	thinking                          bool           // the thinking mode shown in the Bottom panel
+	tokens                            int            // the Session tokens used, shown in the Bottom panel (R-132)
 	spend                             float64        // the Session spend in USD shown in the Bottom panel (R-112)
 	modelName                         string         // the Model choice shown in the Bottom panel
 	modelRows                         []ModelRow     // the last model list shown by /model, in menu order (for /model N)
@@ -110,7 +114,7 @@ func newModel(ctx context.Context, d Deps, clock func() time.Time) *model {
 		d.Approver.SetAuto(true)
 	}
 	m := &model{d: d, ctx: ctx, clock: clock, tick: spinTick, bgTick: bgTick, ta: ta, cv: newConv(), cur: -1,
-		outBuf: map[int][]byte{}, sc: scrollState{follow: true}, limit: d.Limit, est: true, modelName: d.Model, providerName: d.Provider, thinking: d.Think, spend: d.Spend}
+		outBuf: map[int][]byte{}, sc: scrollState{follow: true}, limit: d.Limit, est: true, modelName: d.Model, providerName: d.Provider, thinking: d.Think, spend: d.Spend, tokens: d.Tokens}
 	m.resize(defaultCol, 0)
 	m.rebuild(d.History)
 	return m
@@ -210,14 +214,14 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		return nil
 	case tea.MouseWheelMsg:
 		if m.pick != nil {
-			m.pick.wheel(msg)
+			m.pick.Wheel(msg)
 			return nil
 		}
 		m.onWheel(msg)
 		return nil
 	case tea.MouseMsg:
 		if m.pick != nil {
-			m.pickAct(m.pick.mouse(msg))
+			m.pickAct(m.pick.Mouse(msg))
 			return nil
 		}
 		return m.onMouse(msg)
@@ -327,7 +331,7 @@ func (m *model) onEvents(evs eventsMsg) tea.Cmd {
 		case agent.EvProvider:
 			m.providerName = ev.Text
 		case agent.EvSpend:
-			m.spend = ev.Spend
+			m.spend, m.tokens = ev.Spend, ev.Tokens
 		case agent.EvThinking:
 			m.thinking = ev.Text == "on"
 		case agent.EvSpeed:
@@ -421,7 +425,7 @@ func (m *model) say(text string) {
 
 // submit runs a command or sends a message to the agent.
 func (m *model) submit(line string) tea.Cmd {
-	c, err := ParseCommand(line)
+	c, err := command.Parse(line)
 	if err != nil {
 		if name, text, ok := m.skillLine(line); ok { // /<skill> [text] (R-83)
 			m.submitSkill(name, text)
@@ -431,61 +435,61 @@ func (m *model) submit(line string) tea.Cmd {
 		return nil
 	}
 	switch c.Kind {
-	case KindExit:
+	case command.KindExit:
 		return m.requestQuit()
-	case KindClear:
+	case command.KindClear:
 		m.clear()
-	case KindAuto:
+	case command.KindAuto:
 		on := !m.d.Approver.Auto()
 		m.d.Approver.SetAuto(on)
 		m.say(map[bool]string{true: "auto-approve on", false: "auto-approve off"}[on])
-	case KindTool:
+	case command.KindTool:
 		m.showCall(c.N)
-	case KindBg:
+	case command.KindBg:
 		m.listJobs()
-	case KindCompact:
+	case command.KindCompact:
 		m.compact()
-	case KindSessions:
+	case command.KindSessions:
 		m.openPicker()
-	case KindRename:
+	case command.KindRename:
 		m.rename(c.Name)
-	case KindHelp:
-		m.say(helpText())
-	case KindContext:
+	case command.KindHelp:
+		m.say(command.Help())
+	case command.KindContext:
 		m.showContext()
-	case KindBlocks:
+	case command.KindBlocks:
 		m.listBlocks()
-	case KindBlock:
+	case command.KindBlock:
 		if err := m.d.Blocks.SetEnabled(c.Name, c.On); err != nil {
 			m.say(err.Error())
 		}
-	case KindModel:
+	case command.KindModel:
 		return m.chooseModel(c.Name)
-	case KindServer:
+	case command.KindServer:
 		return m.chooseServer(c.Name)
-	case KindThink:
+	case command.KindThink:
 		m.think(c.Name)
-	case KindTask:
+	case command.KindTask:
 		m.submitTask(c.Text)
-	case KindSkill:
+	case command.KindSkill:
 		m.submitSkill(c.Name, c.Text)
-	case KindSkills:
+	case command.KindSkills:
 		m.skills(c)
-	case KindMCP:
+	case command.KindMCP:
 		m.mcp(c)
-	case KindAgents:
+	case command.KindAgents:
 		m.agentsCmd(c)
-	case KindPrompt:
+	case command.KindPrompt:
 		m.promptCmd(c)
-	case KindConfig:
+	case command.KindConfig:
 		if m.d.Config == nil {
 			m.say("settings are not available here")
 		} else {
 			m.openMenu(m.configMenu(), nil)
 		}
-	case KindKeys:
+	case command.KindKeys:
 		m.keysCmd(c)
-	case KindCost:
+	case command.KindCost:
 		return m.costCmd()
 	default:
 		m.addWaiting(c.Text) // shown at once, before the agent takes it (R-27)
@@ -502,11 +506,16 @@ func (m *model) clear() {
 	case err != nil:
 		m.say("clear: " + err.Error())
 	default:
-		m.cv.reset()
-		m.calls, m.runN, m.tasks, m.outBuf, m.cur, m.nextN, m.step = nil, nil, nil, map[int][]byte{}, -1, 0, 0
-		m.sc = scrollState{follow: true}
-		m.clearSel()
+		m.resetList()
 	}
+}
+
+// resetList empties the list, the call records and the scroll (clear and rebuild).
+func (m *model) resetList() {
+	m.cv.reset()
+	m.calls, m.runN, m.tasks, m.outBuf, m.cur, m.nextN, m.step = nil, nil, nil, map[int][]byte{}, -1, 0, 0
+	m.sc = scrollState{follow: true}
+	m.clearSel()
 }
 
 func (m *model) listBlocks() {

@@ -1,0 +1,56 @@
+diff -ruN a/logstats.py ref/logstats.py
+--- a/logstats.py	2026-11-01 03:49:44
++++ ref/logstats.py	2026-11-01 03:35:15
+@@ -3,6 +3,7 @@
+ An event is a tuple (ts, user, kind): ts is an int number of seconds, user and kind are strings.
+ Input lists are sorted by ts (non-decreasing).
+ """
++from collections import Counter, deque
+ 
+ 
+ def dedupe(events, window):
+@@ -12,15 +13,14 @@
+     event.ts - kept.ts < window. Otherwise it is kept (and later events are compared with it).
+     Returns the kept events in their original order.
+     """
++    last = {}
+     kept = []
+     for ev in events:
+-        ts, user, kind = ev
+-        dup = False
+-        for k in kept:
+-            if k[1] == user and k[2] == kind and ts - k[0] < window:
+-                dup = True
+-        if not dup:
+-            kept.append(ev)
++        key = (ev[1], ev[2])
++        if key in last and ev[0] - last[key] < window:
++            continue
++        last[key] = ev[0]
++        kept.append(ev)
+     return kept
+ 
+ 
+@@ -30,11 +30,16 @@
+ 
+     Returns a list of ints with the same length as events.
+     """
++    counts = Counter()
++    win = deque()
+     out = []
+-    for i, (ts, _, _) in enumerate(events):
+-        users = set()
+-        for j in range(i + 1):
+-            if events[j][0] > ts - window:
+-                users.add(events[j][1])
+-        out.append(len(users))
++    for ev in events:
++        win.append(ev)
++        counts[ev[1]] += 1
++        while win[0][0] <= ev[0] - window:
++            old = win.popleft()
++            counts[old[1]] -= 1
++            if not counts[old[1]]:
++                del counts[old[1]]
++        out.append(len(counts))
+     return out

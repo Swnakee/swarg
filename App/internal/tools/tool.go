@@ -10,16 +10,18 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"swarg/internal/chat"
 	"swarg/internal/prompt"
+	"swarg/internal/webget"
 )
 
 // ---------------------------------------------------------------------------
@@ -36,6 +38,24 @@ type Tool interface {
 	Run(ctx context.Context, env Env, args json.RawMessage) (Result, error)
 }
 
+// readOnlyTool is embedded by tools that never change anything: they run in parallel without approval.
+type readOnlyTool struct{}
+
+// ReadOnly is true: the tool never changes files.
+func (readOnlyTool) ReadOnly() bool { return true }
+
+// Confirm is false: the tool runs without approval.
+func (readOnlyTool) Confirm() bool { return false }
+
+// askTool is embedded by tools that may change things (a shell command may change anything): the user approves each call.
+type askTool struct{}
+
+// ReadOnly is false: the tool may change things.
+func (askTool) ReadOnly() bool { return false }
+
+// Confirm is true: the user approves each call.
+func (askTool) Confirm() bool { return true }
+
 // Env is what a tool may touch. All file access goes through Root.
 type Env struct {
 	Root         *os.Root // the project folder, opened once by main
@@ -49,7 +69,7 @@ type Env struct {
 	BackgroundGrace time.Duration
 	// OutputWait: shell_output waits up to this long for a running job to end. 0 = no wait.
 	OutputWait time.Duration
-	Web        Web                // web_search and web_fetch settings
+	Web        webget.Getter      // web_search and web_fetch settings
 	Progress   func(chunk string) // nil-safe: live output while a tool runs; never called after Run returns
 	Detach     <-chan struct{}    // closed by the user (Ctrl+B): move the running command to the background
 }
@@ -81,12 +101,7 @@ func NewSet(all []Tool, disabled []string) (*Set, error) {
 	off := map[string]bool{}
 	for _, n := range disabled {
 		if !known[n] {
-			names := make([]string, 0, len(known))
-			for k := range known {
-				names = append(names, k)
-			}
-			sort.Strings(names)
-			return nil, fmt.Errorf("unknown tool %q (known: %s)", n, strings.Join(names, ", "))
+			return nil, fmt.Errorf("unknown tool %q (known: %s)", n, strings.Join(slices.Sorted(maps.Keys(known)), ", "))
 		}
 		off[n] = true
 	}
@@ -138,17 +153,12 @@ func (s *Set) Kind(name string) (known, readOnly, confirm bool) {
 }
 
 // Label is the short call label for the UI; it never panics and tolerates bad JSON.
-func (s *Set) Label(name string, args json.RawMessage) (label string) {
+func (s *Set) Label(name string, args json.RawMessage) string {
 	t, ok := s.Get(name)
 	if !ok {
 		return ""
 	}
-	defer func() {
-		if recover() != nil {
-			label = ""
-		}
-	}()
-	return t.Summary(args)
+	return guard(func() string { return t.Summary(args) })
 }
 
 // Run executes a tool; a panic becomes an error and the output is capped.

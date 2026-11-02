@@ -10,58 +10,64 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Prompt Profiles (R-115): compact, standard and full are cumulative layers over the base Block
+// Prompt Profiles (R-115): low, medium and high are cumulative layers over the base Block
 // ---------------------------------------------------------------------------
 
 // Profile names how much instruction text the SystemPrompt carries.
 type Profile string
 
-// The Profiles, smallest first. Compact is the base Block alone.
+// The Profiles, smallest first. Low is the base Block alone.
 const (
-	Compact  Profile = "compact"
-	Standard Profile = "standard"
-	Full     Profile = "full"
+	Low    Profile = "low"
+	Medium Profile = "medium"
+	High   Profile = "high"
 )
 
-// Names of the layer Blocks. They are override file stems (R-119): `profile-standard.md`, ...
+// profileAliases are the old names of the Profiles (before the 2026-11-01 rename); they are
+// accepted wherever a name comes from outside and never shown or written (R-134).
+var profileAliases = map[string]Profile{"compact": Low, "standard": Medium, "full": High}
+
+// Names of the layer Blocks. They are override file stems (R-119): `profile-medium.md`, ...
 const (
-	nameStandard = "profile-standard"
-	nameFull     = "profile-full"
+	nameMedium   = "profile-medium"
+	nameHigh     = "profile-high"
 	nameSubagent = "subagents"
+
+	// Override file stems of the old Profile names (R-134): read as the new layer names.
+	oldNameMedium = "profile-standard"
+	oldNameHigh   = "profile-full"
 )
 
-//go:embed standard.md
-var standardText string
+//go:embed medium.md
+var mediumText string
 
-//go:embed full.md
-var fullText string
+//go:embed high.md
+var highText string
 
 // subagentText is the sub-agent policy. EMPTY on purpose: T13 part C fills it (SetText or this
 // constant); an empty text leaves no gap in Build.
 const subagentText = ""
 
 // Profiles lists every Profile, smallest first.
-func Profiles() []Profile { return []Profile{Compact, Standard, Full} }
+func Profiles() []Profile { return []Profile{Low, Medium, High} }
 
-// ParseProfile checks a profile name; the error lists the known ones.
+// ParseProfile checks a profile name and returns the Profile; an old name (compact, standard,
+// full) gives its new one (R-134). The error lists the known names.
 func ParseProfile(s string) (Profile, error) {
-	for _, p := range Profiles() {
-		if string(p) == s {
-			return p, nil
-		}
+	if p := Profile(s); slices.Contains(Profiles(), p) {
+		return p, nil
 	}
-	return "", fmt.Errorf("unknown prompt profile %q, known: %s", s, strings.Join(profileNames(), ", "))
+	if p, ok := profileAliases[s]; ok {
+		return p, nil
+	}
+	names := make([]string, 0, len(Profiles()))
+	for _, p := range Profiles() {
+		names = append(names, string(p))
+	}
+	return "", fmt.Errorf("unknown prompt profile %q, known: %s", s, strings.Join(names, ", "))
 }
 
-func profileNames() []string {
-	var out []string
-	for _, p := range Profiles() {
-		out = append(out, string(p))
-	}
-	return out
-}
-
-// level is the rank of a Profile: compact 0, standard 1, full 2.
+// level is the rank of a Profile: low 0, medium 1, high 2.
 func (p Profile) level() int { return slices.Index(Profiles(), p) }
 
 // layer is a Block that joins the SystemPrompt from a Profile on.
@@ -74,9 +80,9 @@ type layer struct {
 // tool Blocks (500+), so the static text stays in front of the dynamic parts (prefix cache).
 func defaultLayers() []layer {
 	return []layer{
-		{Block{Name: nameStandard, Source: SourceBase, Order: 50, Text: standardText, Enabled: true}, Standard},
-		{Block{Name: nameFull, Source: SourceBase, Order: 60, Text: fullText, Enabled: true}, Full},
-		{Block{Name: nameSubagent, Source: SourceBase, Order: 70, Text: subagentText, Enabled: true}, Standard},
+		{Block{Name: nameMedium, Source: SourceBase, Order: 50, Text: mediumText, Enabled: true}, Medium},
+		{Block{Name: nameHigh, Source: SourceBase, Order: 60, Text: highText, Enabled: true}, High},
+		{Block{Name: nameSubagent, Source: SourceBase, Order: 70, Text: subagentText, Enabled: true}, Medium},
 	}
 }
 
@@ -85,7 +91,7 @@ func layerIndex(layers []layer, name string) int {
 	return slices.IndexFunc(layers, func(l layer) bool { return l.Name == name })
 }
 
-// Profile is the Profile in force (compact after Load).
+// Profile is the Profile in force (low after Load).
 func (s *Set) Profile() Profile {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -97,7 +103,8 @@ func (s *Set) Profile() Profile {
 // rebuilds the SystemPrompt every Turn, R-4). A layer switched off with SetEnabled is on again
 // after a switch. An unknown name is an error and changes nothing.
 func (s *Set) SetProfile(p Profile) error {
-	if _, err := ParseProfile(string(p)); err != nil {
+	p, err := ParseProfile(string(p)) // an old name becomes the new one (R-134)
+	if err != nil {
 		return err
 	}
 	s.mu.Lock()
@@ -129,10 +136,12 @@ func (s *Set) layered(p Profile) []Block {
 // BuildAgent is the SystemPrompt of a sub-agent (R-123): the Blocks of Profile p without the
 // sub-agent policy (an agent cannot delegate), the Tool Blocks of the tools tool allows, the
 // type's body, then the project file and the env block with the agent's own model. Switched-off
-// Blocks stay out. An unknown Profile name builds as compact.
+// Blocks stay out. An unknown Profile name builds as low.
 func (s *Set) BuildAgent(p Profile, model, body string, tool func(name string) bool) string {
-	if _, err := ParseProfile(string(p)); err != nil {
-		p = Compact
+	if q, err := ParseProfile(string(p)); err != nil {
+		p = Low
+	} else {
+		p = q
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

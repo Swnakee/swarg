@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"swarg/internal/ui/menu"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -46,40 +47,45 @@ func PickSession(rows []PickRow, del func(id string) error) (id string, ok bool,
 	if err != nil {
 		return "", false, err
 	}
-	pk := final.(*menu)
-	return pk.chosen, pk.chosen != "", nil
+	pk := final.(*menu.Menu)
+	return pk.Chosen(), pk.Chosen() != "", nil
 }
 
 // sessionPick is the session host of a menu: the rows, the Session being written (marked, never
 // deleted) and the deleter (nil disables deletion).
 type sessionPick struct {
-	m       *menu
+	m       *menu.Menu
 	rows    []PickRow
 	current string
 	del     func(id string) error
 }
 
 // newPicker builds the Session menu: rows in the given order (newest first), current marked,
-// Ctrl+D or the ✕ asks to delete through del.
-func newPicker(rows []PickRow, current string, del func(id string) error) *menu {
+// Ctrl+D or the ✕ asks to delete through del. Each edit gets a last look at the menu options (the
+// embedded picker sets its title and its Enter action there).
+func newPicker(rows []PickRow, current string, del func(id string) error, edit ...func(*menu.Options)) *menu.Menu {
 	s := &sessionPick{rows: rows, current: current, del: del}
-	s.m = newMenu("Resume a session", s.items())
-	s.m.hint, s.m.empty = pickKeysHint, "no sessions left   Esc cancel"
-	s.m.keys["ctrl+d"] = func(string) { s.askDelete() }
-	s.m.onRight = func(string) { s.askDelete() }
+	o := menuOpts("Resume a session", s.items())
+	o.Hint, o.Empty = pickKeysHint, "no sessions left   Esc cancel"
+	o.Keys["ctrl+d"] = func(string) { s.askDelete() }
+	o.OnRight = func(string) { s.askDelete() }
+	for _, e := range edit {
+		e(&o)
+	}
+	s.m = menu.New(o)
 	return s.m
 }
 
 // items lays the rows out: `started (local)  model  N msgs  title`, (current), ✕ when deletable.
-func (s *sessionPick) items() []menuRow {
+func (s *sessionPick) items() []menu.Row {
 	mw := 0
 	for _, r := range s.rows {
 		mw = min(max(mw, lipgloss.Width(Clean(r.Model))), pickModelMax)
 	}
-	var items []menuRow
+	var items []menu.Row
 	for _, r := range s.rows {
 		if r.Err != "" {
-			items = append(items, menuRow{ID: r.ID, Text: fmt.Sprintf("  %s  (unreadable)", r.ID), Dim: true})
+			items = append(items, menu.Row{ID: r.ID, Text: fmt.Sprintf("  %s  (unreadable)", r.ID), Dim: true})
 			continue
 		}
 		model := ansi.Truncate(Clean(r.Model), mw, "…")
@@ -88,7 +94,7 @@ func (s *sessionPick) items() []menuRow {
 		if r.ID == s.current {
 			text += "  " + pickCurrent
 		}
-		row := menuRow{ID: r.ID, Text: text, Match: r.Title}
+		row := menu.Row{ID: r.ID, Text: text, Match: r.Title}
 		if s.deletable(r) {
 			row.Right = pickDelete
 		}
@@ -114,32 +120,32 @@ func (s *sessionPick) deletable(r PickRow) bool {
 
 // askDelete starts the delete confirmation for the selected row.
 func (s *sessionPick) askDelete() {
-	r := s.row(s.m.selectedID())
+	r := s.row(s.m.SelectedID())
 	if r == nil || !s.deletable(*r) {
 		if r != nil && r.Err == "" && s.del != nil {
-			s.m.note = errCurrentSession
+			s.m.SetNote(errCurrentSession)
 		}
 		return
 	}
 	id := r.ID
-	s.m.confirmWith("delete session "+firstLine(Clean(r.Title))+"?", btnDelete, func() { s.deleteRow(id) })
+	s.m.Confirm("delete session "+firstLine(Clean(r.Title))+"?", btnDelete, func() { s.deleteRow(id) })
 }
 
 // deleteRow deletes the session through del, drops its row and keeps the cursor near where it
 // was. A delete error is shown in the footer and the row stays.
 func (s *sessionPick) deleteRow(id string) {
 	if err := s.del(id); err != nil {
-		s.m.note = "delete failed: " + err.Error()
+		s.m.SetNote("delete failed: " + err.Error())
 		return
 	}
-	pos := s.m.visIndex(id)
+	pos := s.m.VisIndex(id)
 	for i := range s.rows {
 		if s.rows[i].ID == id {
 			s.rows = append(s.rows[:i:i], s.rows[i+1:]...)
 			break
 		}
 	}
-	s.m.setItems(s.items())
-	s.m.selectNear(pos)
-	s.m.note = "session deleted"
+	s.m.SetRows(s.items())
+	s.m.SelectNear(pos)
+	s.m.SetNote("session deleted")
 }

@@ -8,20 +8,14 @@ import (
 	"swarg/internal/chat"
 )
 
-// ShellKill kills a background job.
-type ShellKill struct{}
+// ShellKill kills a background job; it stops a process, so the user approves every kill.
+type ShellKill struct{ askTool }
 
 // Spec describes the tool to the model.
 func (ShellKill) Spec() chat.ToolSpec {
 	return chat.ToolSpec{Name: "shell_kill", Description: "Kill a background job",
 		Schema: json.RawMessage(jobIDSchema)}
 }
-
-// ReadOnly is false: it stops a process.
-func (ShellKill) ReadOnly() bool { return false }
-
-// Confirm is true: the user approves every kill.
-func (ShellKill) Confirm() bool { return true }
 
 // Block is the system prompt text for the tool.
 func (ShellKill) Block() string {

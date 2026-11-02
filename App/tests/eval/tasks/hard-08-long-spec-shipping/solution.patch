@@ -1,0 +1,81 @@
+diff -ruN a/SPEC.md ref/SPEC.md
+--- a/SPEC.md	2026-11-01 03:51:14
++++ ref/SPEC.md	2026-11-01 03:44:13
+@@ -227,7 +227,7 @@
+ Sandbox tracking numbers start with `TEST` and move through the events on a fixed schedule:
+ CREATED at once, PICKED_UP after 1 minute, IN_TRANSIT after 5 minutes, DELIVERED after 15 minutes.
+ Sandbox quotes use the same rating engine as production, so rates and rules are identical.
+-The sandbox accepts any API key that starts with `demo-` (rate limited to 60 requests per minute).
++The sandbox API key is `sandbox-key-123` (public, rate limited to 60 requests per minute).
+ Contract tests live in the `contracts/` folder of the repository. They are run on every deployment.
+ A failing contract test blocks the deployment of the rating engine and notifies the on-call engineer.
+ Load tests are run before each major release at 200 requests per second for ten minutes.
+diff -ruN a/shipping.py ref/shipping.py
+--- a/shipping.py	2026-11-01 03:51:14
++++ ref/shipping.py	2026-11-01 03:44:13
+@@ -1,6 +1,13 @@
+ """Domestic Ground price quote. See SPEC.md (the sections that name this service)."""
++import math
++from fractions import Fraction
+ 
++RATES = {1: (500, 650, 900, 1300, 2000, 90), 2: (600, 780, 1050, 1500, 2300, 100),
++         3: (700, 900, 1200, 1750, 2700, 120), 4: (850, 1100, 1500, 2100, 3300, 150),
++         5: (1000, 1300, 1800, 2600, 4000, 180), 6: (1200, 1600, 2200, 3200, 5000, 220)}
++REMOTE_PREFIXES = ("99", "98", "00")
+ 
++
+ class Prohibited(Exception):
+     """The parcel may not be shipped (hazmat)."""
+ 
+@@ -9,11 +16,44 @@
+     """The parcel is over the weight limit."""
+ 
+ 
+-def quote(parcel, origin, dest, saturday=False):
+-    """Return a dict of integer cents: base, oversize, remote, saturday, fuel, insurance, total.
++def _postcode(pc):
++    if not (isinstance(pc, str) and len(pc) == 5 and pc.isascii() and pc.isdigit()):
++        raise ValueError("bad postcode %r" % (pc,))
+ 
+-    parcel: {"weight_kg": number, "l": number, "w": number, "h": number,
+-             "declared_value": int cents, "hazmat": bool}
+-    origin, dest: postcode strings.
+-    """
+-    raise NotImplementedError
++
++def _half_up(x):
++    return math.floor(Fraction(x) + Fraction(1, 2))
++
++
++def quote(parcel, origin, dest, saturday=False):
++    _postcode(origin)
++    _postcode(dest)
++    if parcel["hazmat"]:
++        raise Prohibited("hazmat")
++    weight = Fraction(str(parcel["weight_kg"]))
++    if weight > 70:
++        raise ParcelTooHeavy("over 70 kg")
++    dims = [Fraction(str(parcel[k])) for k in ("l", "w", "h")]
++    billable = max(weight, dims[0] * dims[1] * dims[2] / 5000)
++    billable = max(Fraction(math.ceil(billable * 2), 2), Fraction(1))
++    zone = min(6, 1 + abs(int(origin[0]) - int(dest[0])))
++    rate = RATES[zone]
++    for limit, price in zip((1, 2, 5, 10, 20), rate[:5]):
++        if billable <= limit:
++            base = price
++            break
++    else:
++        base = rate[4] + math.ceil(billable - 20) * rate[5]
++    longest, *rest = sorted(dims, reverse=True)
++    oversize = 1500 if longest > 100 or longest + 2 * sum(rest) > 250 else 0
++    remote = 800 if dest[:2] in REMOTE_PREFIXES else 0
++    if saturday and remote:
++        raise ValueError("Saturday delivery is not available to remote areas")
++    sat = 500 if saturday else 0
++    fuel = _half_up(Fraction(base + oversize + remote + sat) * Fraction(825, 10000))
++    dv = parcel["declared_value"]
++    insurance = max(200, min(5000, _half_up(Fraction(dv, 100)))) if dv > 10000 else 0
++    out = {"base": base, "oversize": oversize, "remote": remote, "saturday": sat, "fuel": fuel,
++           "insurance": insurance}
++    out["total"] = sum(out.values())
++    return out

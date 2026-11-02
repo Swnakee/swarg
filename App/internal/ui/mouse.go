@@ -29,11 +29,11 @@ func (m *model) onMouse(msg tea.MouseMsg) tea.Cmd {
 	mm := msg.Mouse()
 	switch msg.(type) {
 	case tea.MouseClickMsg:
-		m.hv.move(mm.X, mm.Y)
+		m.hv.Move(mm.X, mm.Y)
 		m.onPress(mm)
 	case tea.MouseMotionMsg:
 		if mm.Button == tea.MouseNone {
-			m.hv.move(mm.X, mm.Y)
+			m.hv.Move(mm.X, mm.Y)
 			return nil
 		}
 		m.onDrag(mm)
@@ -78,7 +78,7 @@ func (m *model) onPress(mm tea.Mouse) {
 	}
 	pt, head, ok := m.listPoint(mm.X, mm.Y)
 	m.pr = press{down: true, x: mm.X, y: mm.Y, pt: pt, onList: ok, head: head && ok}
-	if id, ok := m.hv.at(mm.X, mm.Y); ok && strings.HasPrefix(id, "panel:") {
+	if id, ok := m.hv.At(mm.X, mm.Y); ok && strings.HasPrefix(id, "panel:") {
 		m.pr.panel = id
 	}
 }
@@ -93,7 +93,7 @@ func (m *model) onDrag(mm tea.Mouse) {
 		return
 	}
 	m.pr.dragging = true
-	m.hv.move(mm.X, mm.Y)
+	m.hv.Move(mm.X, mm.Y)
 	h := m.listHeight()
 	y := min(max(mm.Y, 0), max(h-1, 0))
 	switch {
@@ -121,7 +121,7 @@ func (m *model) onRelease(mm tea.Mouse) tea.Cmd {
 	if !p.down {
 		return nil
 	}
-	m.hv.move(mm.X, mm.Y)
+	m.hv.Move(mm.X, mm.Y)
 	if !p.dragging && (mm.X != p.x || mm.Y != p.y) { // the button moved with no motion event
 		mm.Button = tea.MouseLeft
 		m.onDrag(mm)
@@ -133,7 +133,7 @@ func (m *model) onRelease(mm tea.Mouse) tea.Cmd {
 		case p.head:
 			m.cv.toggle(p.pt.item)
 		case !p.onList:
-			if id, ok := m.hv.at(p.x, p.y); ok { // the spot under the press, like the panel
+			if id, ok := m.hv.At(p.x, p.y); ok { // the spot under the press, like the panel
 				m.clickSpot(id)
 			}
 		}

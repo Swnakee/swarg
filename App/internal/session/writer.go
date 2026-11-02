@@ -86,7 +86,7 @@ func Create(dir string, h Header) (*Writer, error) {
 // Open continues an existing SessionFile (resume): a torn last line is cut off
 // first, and new records continue the file's seq numbering.
 func Open(path string) (*Writer, error) {
-	l, err := load(path)
+	l, err := Load(path)
 	if err != nil {
 		return nil, err
 	}
@@ -137,9 +137,7 @@ func (w *Writer) Patch(ps []Patch) error {
 	for _, p := range ps {
 		r.Patch = append(r.Patch, patchRecord{Seq: p.Seq, Stub: p.Stub, Args: p.Args})
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.write(r)
+	return w.writeLocked(r)
 }
 
 // Name records that the Session was given a Name (R-32). The Name is one line: surrounding
@@ -150,16 +148,12 @@ func (w *Writer) Name(name string) error {
 	if name == "" {
 		return ErrBlankName
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.write(record{Name: name})
+	return w.writeLocked(record{Name: name})
 }
 
 // Clear records that the history was emptied.
 func (w *Writer) Clear() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.write(record{Clear: true})
+	return w.writeLocked(record{Clear: true})
 }
 
 // Compact records that the messages from fromSeq to toSeq (inclusive, by
@@ -209,9 +203,7 @@ func (w *Writer) Model(name string) error {
 	if name == "" {
 		return errors.New("session: blank model")
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.write(record{Model: name})
+	return w.writeLocked(record{Model: name})
 }
 
 // Provider records a Source switch (R-101): the Session runs on name from here on. A blank name
@@ -220,16 +212,21 @@ func (w *Writer) Provider(name string) error {
 	if name == "" {
 		return errors.New("session: blank provider")
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.write(record{Provider: name})
+	return w.writeLocked(record{Provider: name})
 }
 
 // Thinking records a thinking mode switch; the last one wins on replay.
 func (w *Writer) Thinking(on bool) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.write(record{Think: &on})
+	return w.writeLocked(record{Think: &on})
+}
+
+// Usage records the tokens of one response (R-131); replay sums the lines. Nothing positive
+// writes nothing.
+func (w *Writer) Usage(in, cached, out int) error {
+	if in <= 0 && cached <= 0 && out <= 0 {
+		return nil
+	}
+	return w.writeLocked(record{Usage: &usageRecord{In: max(in, 0), Cached: max(cached, 0), Out: max(out, 0)}})
 }
 
 // Spend records the cost in USD of one response of model (R-111); replay sums the lines per model.
@@ -238,9 +235,7 @@ func (w *Writer) Spend(model string, usd float64) error {
 	if model == "" || !(usd > 0) {
 		return nil
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.write(record{Spend: &spendRecord{Model: model, USD: usd}})
+	return w.writeLocked(record{Spend: &spendRecord{Model: model, USD: usd}})
 }
 
 // Profile records a prompt profile choice (R-118); the last one wins on replay. A blank name is an
@@ -249,9 +244,7 @@ func (w *Writer) Profile(name string) error {
 	if name == "" {
 		return errors.New("session: blank prompt profile")
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.write(record{Prompt: name})
+	return w.writeLocked(record{Prompt: name})
 }
 
 // Flush forces the file to stable storage.
@@ -283,6 +276,13 @@ func (w *Writer) Close() error {
 		return fmt.Errorf("session: %w", serr)
 	}
 	return nil
+}
+
+// writeLocked is write under w.mu, for records that need no other state.
+func (w *Writer) writeLocked(r record) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.write(r)
 }
 
 // write appends one record as one write. The caller holds w.mu.

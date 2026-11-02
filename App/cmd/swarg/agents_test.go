@@ -38,7 +38,7 @@ func newHostRig(t *testing.T) *hostRig {
 	}
 	set, _ := agents.Load(t.TempDir(), t.TempDir(), nil)
 	srcs, _ := testSources(t, &cfg)
-	r := &hostRig{set: set, ps: ps, cfg: &cfg, prof: "standard"}
+	r := &hostRig{set: set, ps: ps, cfg: &cfg, prof: "medium"}
 	r.h = &agentHost{set: set, cfg: &cfg, ps: ps, srcs: srcs, runner: toolRunner{set: ts},
 		profile: func() string { return r.prof }, model: func() string { return "session-model" }}
 	return r
@@ -54,17 +54,17 @@ func isolateKeys(t *testing.T) {
 
 func TestAgentHost_CompactOffersNoTypes(t *testing.T) {
 	r := newHostRig(t)
-	r.prof = "compact"
+	r.prof = "low"
 	if got := r.h.Types(); len(got) != 0 {
-		t.Fatalf("compact offers %d types, want none", len(got))
+		t.Fatalf("low offers %d types, want none", len(got))
 	}
-	r.prof = "standard"
+	r.prof = "medium"
 	if len(r.h.Types()) == 0 {
-		t.Fatal("standard offers no types")
+		t.Fatal("medium offers no types")
 	}
-	r.prof = "full"
+	r.prof = "high"
 	if len(r.h.Types()) == 0 {
-		t.Fatal("full offers no types")
+		t.Fatal("high offers no types")
 	}
 }
 
@@ -157,7 +157,7 @@ func TestAgentsView_SwitchRewritesTheLayerAndSaves(t *testing.T) {
 	if err := r.ps.SetText(subagentsBlock, r.set.Block()); err != nil {
 		t.Fatal(err)
 	}
-	_ = r.ps.SetProfile(prompt.Standard)
+	_ = r.ps.SetProfile(prompt.Medium)
 	if !strings.Contains(r.ps.Build(), "- review:") {
 		t.Fatal("review is missing from the layer")
 	}
@@ -195,14 +195,14 @@ func TestStandardPrompt_ListsEnabledTypesAndCompactDoesNot(t *testing.T) {
 	if err := r.ps.SetText(subagentsBlock, r.set.Block()); err != nil {
 		t.Fatal(err)
 	}
-	compact := r.ps.Build()
-	_ = r.ps.SetProfile(prompt.Standard)
+	low := r.ps.Build()
+	_ = r.ps.SetProfile(prompt.Medium)
 	std := r.ps.Build()
-	if strings.Contains(compact, "Sub-agents:") || strings.Contains(compact, "explore") {
-		t.Error("compact describes sub-agents (I-40)")
+	if strings.Contains(low, "Sub-agents:") || strings.Contains(low, "explore") {
+		t.Error("low describes sub-agents (I-40)")
 	}
 	if !strings.Contains(std, "- explore:") || !strings.Contains(std, "agent tool") {
-		t.Error("standard does not list the types")
+		t.Error("medium does not list the types")
 	}
 }
 
@@ -278,7 +278,7 @@ func TestAgentsView_NewDefaultsToTheGlobalFolder(t *testing.T) {
 
 func TestAgentsView_EditedGlobalFileAppliesWithoutRestart(t *testing.T) {
 	r, v, _, _ := globalRig(t)
-	_ = r.ps.SetProfile(prompt.Standard)
+	_ = r.ps.SetProfile(prompt.Medium)
 	path, _, err := v.Edit("explore")
 	if err != nil {
 		t.Fatal(err)

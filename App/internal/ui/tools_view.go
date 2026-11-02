@@ -98,6 +98,14 @@ func (m *model) running() []callRec {
 	return out
 }
 
+// appendCall records r and keeps the newest maxCalls records.
+func (m *model) appendCall(r callRec) {
+	m.calls = append(m.calls, r)
+	if len(m.calls) > maxCalls {
+		m.calls = append(m.calls[:0], m.calls[len(m.calls)-maxCalls:]...)
+	}
+}
+
 // toolStart records a call and adds its block to the list. The first start after all calls
 // ended opens a new step; the model text before it is finished first.
 func (m *model) toolStart(ev agent.Event) {
@@ -108,11 +116,8 @@ func (m *model) toolStart(ev agent.Event) {
 	m.nextN++
 	r := callRec{n: m.nextN, step: m.step, call: ev.Call, label: ev.Label}
 	r.item = m.place(m.cv.addTool(r))
-	m.calls = append(m.calls, r)
+	m.appendCall(r)
 	m.runN = append(m.runN, r.n)
-	if len(m.calls) > maxCalls {
-		m.calls = append(m.calls[:0], m.calls[len(m.calls)-maxCalls:]...)
-	}
 }
 
 // toolEnd completes the matching call.

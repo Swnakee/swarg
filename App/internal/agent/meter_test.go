@@ -54,6 +54,7 @@ func TestMeter_KeepsLastExactOnError(t *testing.T) {
 // Warnings
 // ---------------------------------------------------------------------------
 
+// R-5
 func TestMeter_WarningsOncePerUpwardCrossing(t *testing.T) {
 	steps := []struct {
 		used int
@@ -70,6 +71,7 @@ func TestMeter_WarningsOncePerUpwardCrossing(t *testing.T) {
 	}
 }
 
+// R-5
 func TestMeter_JumpsStraightTo100(t *testing.T) {
 	m := meter{limit: 1000}
 	got := m.check(1100, false)

@@ -5,13 +5,13 @@ Feature: API keys
 
   Rule: A Key is read from the Keys file by its name (R-106, R-107)
 
-    @S-670
+    @S-670 @R-105
     Scenario: A Key in the Keys file is the key of its name
       Given the Keys file holds "T12_KEY=test-key-value-1"
       When the key of the name "T12_KEY" is read
       Then the key is "test-key-value-1" from the "keys.env"
 
-    @S-671
+    @S-671 @R-105
     Scenario: The environment variable wins over the Keys file
       Given the Keys file holds "T12_KEY=test-key-value-1"
       And the environment variable "T12_KEY" is "test-key-env"

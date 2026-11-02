@@ -1,0 +1,182 @@
+diff -ruN a/calc.py ref/calc.py
+--- a/calc.py	2026-11-01 03:33:35
++++ ref/calc.py	2026-11-01 03:33:35
+@@ -1,4 +1,5 @@
+ """Arithmetic expression evaluator. See SPEC.md."""
++import math
+ 
+ 
+ class ExprError(Exception):
+@@ -8,5 +9,171 @@
+         self.pos = pos
+ 
+ 
++def _tokenize(text):
++    toks = []
++    i = 0
++    n = len(text)
++    while i < n:
++        c = text[i]
++        if c in " \t":
++            i += 1
++        elif c.isdigit():
++            j = i
++            while j < n and text[j].isdigit():
++                j += 1
++            if j < n and text[j] == ".":
++                k = j + 1
++                if k >= n or not text[k].isdigit():
++                    raise ExprError("bad number", j)
++                while k < n and text[k].isdigit():
++                    k += 1
++                j = k
++            toks.append(("num", float(text[i:j]), i))
++            i = j
++        elif c.isalpha() or c == "_":
++            j = i
++            while j < n and (text[j].isalnum() or text[j] == "_"):
++                j += 1
++            toks.append(("id", text[i:j], i))
++            i = j
++        elif c in "+-*/%^(),":
++            toks.append(("op", c, i))
++            i += 1
++        else:
++            raise ExprError("unexpected character %r" % c, i)
++    return toks
++
++
++class _P:
++    def __init__(self, text, variables):
++        self.text = text
++        self.vars = variables or {}
++        self.toks = _tokenize(text)
++        self.i = 0
++        self.end = len(text)
++
++    def peek(self):
++        return self.toks[self.i] if self.i < len(self.toks) else None
++
++    def is_op(self, ch):
++        t = self.peek()
++        return t is not None and t[0] == "op" and t[1] == ch
++
++    def check(self, v, pos):
++        if math.isinf(v) or math.isnan(v):
++            raise ExprError("overflow", pos)
++        return v
++
++    def expr(self):
++        v = self.term()
++        while self.is_op("+") or self.is_op("-"):
++            _, op, pos = self.toks[self.i]
++            self.i += 1
++            r = self.term()
++            v = self.check(v + r if op == "+" else v - r, pos)
++        return v
++
++    def term(self):
++        v = self.unary()
++        while self.is_op("*") or self.is_op("/") or self.is_op("%"):
++            _, op, pos = self.toks[self.i]
++            self.i += 1
++            r = self.unary()
++            if op == "*":
++                v = self.check(v * r, pos)
++            else:
++                if r == 0:
++                    raise ExprError("division by zero", pos)
++                v = self.check(v / r if op == "/" else v % r, pos)
++        return v
++
++    def unary(self):
++        if self.is_op("-"):
++            self.i += 1
++            return -self.unary()
++        if self.is_op("+"):
++            self.i += 1
++            return self.unary()
++        return self.power()
++
++    def power(self):
++        base = self.primary()
++        if self.is_op("^"):
++            pos = self.toks[self.i][2]
++            self.i += 1
++            ex = self.unary()
++            try:
++                v = base ** ex
++            except OverflowError:
++                raise ExprError("overflow", pos)
++            except ZeroDivisionError:
++                raise ExprError("division by zero", pos)
++            if isinstance(v, complex):
++                raise ExprError("complex result", pos)
++            return self.check(float(v), pos)
++        return base
++
++    def primary(self):
++        t = self.peek()
++        if t is None:
++            raise ExprError("unexpected end of input", self.end)
++        kind, val, pos = t
++        if kind == "num":
++            self.i += 1
++            return val
++        if kind == "id":
++            self.i += 1
++            if self.is_op("("):
++                return self.call(val, pos)
++            if val not in self.vars:
++                raise ExprError("unknown variable %s" % val, pos)
++            return float(self.vars[val])
++        if val == "(":
++            self.i += 1
++            v = self.expr()
++            if self.peek() is None:
++                raise ExprError("missing )", self.end)
++            if not self.is_op(")"):
++                raise ExprError("expected )", self.peek()[2])
++            self.i += 1
++            return v
++        raise ExprError("unexpected %r" % val, pos)
++
++    def call(self, name, pos):
++        self.i += 1  # (
++        args = []
++        if not self.is_op(")"):
++            while True:
++                args.append(self.expr())
++                if self.is_op(","):
++                    self.i += 1
++                    continue
++                break
++        if self.peek() is None:
++            raise ExprError("missing )", self.end)
++        if not self.is_op(")"):
++            raise ExprError("expected )", self.peek()[2])
++        self.i += 1
++        fn = {"min": (1, None), "max": (1, None), "abs": (1, 1), "sqrt": (1, 1)}.get(name)
++        if fn is None:
++            raise ExprError("unknown function %s" % name, pos)
++        if len(args) < fn[0] or (fn[1] is not None and len(args) > fn[1]):
++            raise ExprError("wrong argument count for %s" % name, pos)
++        if name == "min":
++            return min(args)
++        if name == "max":
++            return max(args)
++        if name == "abs":
++            return abs(args[0])
++        if args[0] < 0:
++            raise ExprError("sqrt of negative", pos)
++        return math.sqrt(args[0])
++
++
+ def evaluate(text, variables=None):
+-    raise NotImplementedError
++    p = _P(text, variables)
++    v = p.expr()
++    t = p.peek()
++    if t is not None:
++        raise ExprError("unexpected %r" % (t[1],), t[2])
++    return float(v)

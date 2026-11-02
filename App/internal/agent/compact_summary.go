@@ -116,8 +116,8 @@ func (a *Agent) ask(ctx context.Context, req chat.Request) (string, error) {
 			switch ev.Kind {
 			case chat.EventDelta:
 				b.WriteString(ev.Text)
-			case chat.EventUsage: // the summary costs money too, though the meter ignores it
-				a.addSpend(req.Model, ev.Usage.Cost)
+			case chat.EventUsage: // the summary costs money and tokens too, though the meter ignores it
+				a.addUsage(req.Model, ev.Usage)
 			case chat.EventDone:
 				if ev.Err != nil {
 					return "", ev.Err

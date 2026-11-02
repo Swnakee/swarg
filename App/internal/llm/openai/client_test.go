@@ -285,6 +285,7 @@ func TestClient_ConnectionRefused(t *testing.T) {
 	}
 }
 
+// I-2
 func TestClient_NoDone(t *testing.T) {
 	srv := llmtest.New(t, llmtest.Reply{Chunks: []string{"a"}, NoDone: true})
 	evs := streamAll(t, New(srv.URL, "", nil), userReq("hi"))
@@ -294,6 +295,7 @@ func TestClient_NoDone(t *testing.T) {
 	}
 }
 
+// I-2
 func TestClient_MalformedChunk(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -337,6 +339,7 @@ func TestClient_UsageOnlyChunk(t *testing.T) {
 	}
 }
 
+// I-2
 func TestClient_IdleTimeout(t *testing.T) {
 	gate := make(chan struct{}) // never closed: the server stalls after the keepalive
 	srv := llmtest.New(t, llmtest.Reply{Keepalives: 1, Gate: gate, GateAfter: 0, Chunks: []string{"a"}})
@@ -395,6 +398,7 @@ func sseBody(payloads ...string) string {
 	return sb.String()
 }
 
+// I-2
 func TestClient_ToolCallAccumulation(t *testing.T) {
 	const done = "[DONE]"
 	cases := []struct {

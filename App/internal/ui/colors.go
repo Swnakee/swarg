@@ -1,8 +1,8 @@
 package ui
 
 import (
-	"regexp"
 	"strings"
+	"swarg/internal/ui/hover"
 
 	"github.com/charmbracelet/colorprofile"
 )
@@ -17,15 +17,13 @@ import (
 // text falls back to the terminal's own colours, which are always readable.
 // ---------------------------------------------------------------------------
 
-var sgrRe = regexp.MustCompile("\x1b\\[([0-9;:]*)m")
-
 // fitProfile adapts a rendered view to the colour profile p. Unknown (no report yet) and
 // 256 or more colours keep the view as it is.
 func fitProfile(s string, p colorprofile.Profile) string {
 	if p == colorprofile.Unknown || p >= colorprofile.ANSI256 || !strings.Contains(s, "\x1b[") {
 		return s
 	}
-	return sgrRe.ReplaceAllStringFunc(s, dropBackground)
+	return hover.SGR.ReplaceAllStringFunc(s, dropBackground)
 }
 
 // dropBackground removes the background and foreground parameters from one SGR sequence

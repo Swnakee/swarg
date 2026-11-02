@@ -86,17 +86,37 @@ func (c *call) usage(prompt, completion int) {
 
 // end sends the final event and closes the stream.
 func (c *call) end(f chat.FinishReason, err error) {
+	c.p.mu.Lock()
+	c.p.cur-- // before Done: the reader may start the next request as soon as it sees Done
+	c.p.mu.Unlock()
 	c.ch <- chat.StreamEvent{Kind: chat.EventDone, Finish: f, Err: err}
 	close(c.ch)
-	c.p.mu.Lock()
-	c.p.cur--
-	c.p.mu.Unlock()
 }
 
 // reply says the texts and ends with stop.
 func (c *call) reply(texts ...string) {
 	c.say(texts...)
 	c.end(chat.FinishStop, nil)
+}
+
+// The fake must stop counting a stream before its Done is visible: the agent frees its slot on
+// Done and the next agent's request must not count as overlapping (TestAgent_SourceLimitSerializes
+// flaked 1 in 8000 runs when end decremented after sending Done).
+func TestFakeProvider_DoneComesAfterTheStreamStopsCounting(t *testing.T) {
+	p := newProvider()
+	ch, _ := p.Stream(context.Background(), chat.Request{})
+	c := <-p.calls
+	go c.reply("x")
+	for ev := range ch {
+		if ev.Kind == chat.EventDone {
+			p.mu.Lock()
+			cur := p.cur
+			p.mu.Unlock()
+			if cur != 0 {
+				t.Fatalf("Done seen while the stream still counts (cur %d)", cur)
+			}
+		}
+	}
 }
 
 // recorder collects events and lets a test wait for a condition without sleeping.
@@ -836,6 +856,46 @@ func TestAgent_EmptyAnswerWithTokensTwiceEndsTheTurn(t *testing.T) {
 	}
 	wait(t, r.a)
 	if w := r.rec.texts(EvWarning); len(w) != 2 || w[0] != droppedWarning || w[1] != droppedStop {
+		t.Fatalf("warnings = %q", w)
+	}
+}
+
+// A Step that ends with reasoning only - no text, no call - delivered nothing the user can use:
+// gpt-oss over OpenRouter writes "Let's search." in its reasoning and stops (T14 matrix, 31 of 48
+// eval tasks lost). It asks the model again, once.
+func TestAgent_ReasoningOnlyAnswerAsksTheModelAgain(t *testing.T) {
+	r := startRig(t)
+	r.a.Submit("rename it")
+	c := r.p.next(t)
+	c.ch <- chat.StreamEvent{Kind: chat.EventReasoning, Text: "We need to rename. Let's search."}
+	c.usage(100, 46)
+	c.end(chat.FinishStop, nil)
+	c = r.p.next(t)
+	if last := c.req.Messages[len(c.req.Messages)-1]; last.Role != chat.RoleUser || !strings.Contains(last.Content, reasoningOnlyNudge) {
+		t.Fatalf("last request message = %+v", last)
+	}
+	c.reply("done")
+	wait(t, r.a)
+	if w := r.rec.texts(EvWarning); len(w) != 1 || w[0] != reasoningOnlyWarning {
+		t.Fatalf("warnings = %q", w)
+	}
+	if end := r.rec.of(EvTurnEnded); end[0].Message.Content != "done" {
+		t.Fatalf("TurnEnded = %+v", end[0])
+	}
+}
+
+// A second reasoning-only answer ends the Turn with the stop note.
+func TestAgent_ReasoningOnlyAnswerTwiceEndsTheTurn(t *testing.T) {
+	r := startRig(t)
+	r.a.Submit("rename it")
+	for i := 0; i < 2; i++ {
+		c := r.p.next(t)
+		c.ch <- chat.StreamEvent{Kind: chat.EventReasoning, Text: "Let's search."}
+		c.usage(100, 20)
+		c.end(chat.FinishStop, nil)
+	}
+	wait(t, r.a)
+	if w := r.rec.texts(EvWarning); len(w) != 2 || w[0] != reasoningOnlyWarning || w[1] != reasoningOnlyStop {
 		t.Fatalf("warnings = %q", w)
 	}
 }

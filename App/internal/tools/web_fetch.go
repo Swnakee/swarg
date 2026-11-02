@@ -8,9 +8,9 @@ import (
 	"mime"
 	"net/http"
 	"strings"
-	"unicode/utf8"
 
 	"swarg/internal/chat"
+	"swarg/internal/webget"
 )
 
 // ---------------------------------------------------------------------------
@@ -78,11 +78,11 @@ func (t WebFetch) Run(ctx context.Context, env Env, args json.RawMessage) (Resul
 	if a.Page < 0 {
 		return Result{}, errors.New("page must be 1 or more")
 	}
-	u, err := parseWebURL(a.URL)
+	u, err := webget.ParseURL(a.URL)
 	if err != nil {
 		return Result{}, err
 	}
-	body, ctype, err := env.Web.get(ctx, u.String(), env.Web.AllowPrivate)
+	body, ctype, err := env.Web.Get(ctx, u.String(), env.Web.AllowPrivate)
 	if err != nil {
 		return Result{}, fmt.Errorf("web_fetch %s: %w", a.URL, err)
 	}
@@ -93,7 +93,7 @@ func (t WebFetch) Run(ctx context.Context, env Env, args json.RawMessage) (Resul
 	var text string
 	switch {
 	case mt == "text/html" || mt == "application/xhtml+xml":
-		if text, err = htmlToText(strings.NewReader(string(body)), ctype, u); err != nil {
+		if text, err = webget.HTMLToText(strings.NewReader(string(body)), ctype, u); err != nil {
 			return Result{}, fmt.Errorf("web_fetch %s: %w", a.URL, err)
 		}
 	case strings.HasPrefix(mt, "text/") || strings.HasSuffix(mt, "json") || strings.HasSuffix(mt, "xml"):
@@ -127,9 +127,7 @@ func splitPages(s string, limit int) []string {
 		if i := strings.LastIndexByte(s[:n], '\n'); i > 0 {
 			n = i
 		} else {
-			for n > 0 && !utf8.RuneStart(s[n]) {
-				n--
-			}
+			n = len(clipBytes(s, n))
 		}
 		pages = append(pages, s[:n])
 		s = strings.TrimLeft(s[n:], "\n")

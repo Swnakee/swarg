@@ -10,6 +10,7 @@ import (
 
 	"swarg/internal/agent"
 	"swarg/internal/chat"
+	"swarg/internal/ui/menu"
 )
 
 // ---------------------------------------------------------------------------
@@ -54,29 +55,11 @@ func space() tea.KeyPressMsg { return tea.KeyPressMsg{Code: tea.KeySpace, Text: 
 // Engine
 // ---------------------------------------------------------------------------
 
-func TestMenu_RightLabelClickAndHotkeys(t *testing.T) {
-	var got []string
-	mn := newMenu("T", []menuRow{{ID: "a", Text: "  row a", Right: "off"}, {ID: "b", Text: "  row b", Right: "on"}})
-	mn.onRight = func(id string) { got = append(got, "right:"+id) }
-	mn.keys["space"] = func(id string) { got = append(got, "space:"+id) }
-	mn.keys["r"] = func(id string) { got = append(got, "r:"+id) }
-	drive(mn, tea.WindowSizeMsg{Width: 40, Height: 6})
-	drive(mn, tea.MouseClickMsg{X: 38, Y: 2, Button: tea.MouseLeft}) // the label of row b
-	drive(mn, space(), ptype("r"))
-	if strings.Join(got, " ") != "right:b space:b r:b" {
-		t.Fatalf("got %v", got)
-	}
-	drive(mn, ptype("/"), ptype("r")) // while filtering, r types
-	if mn.filter != "r" || len(got) != 3 {
-		t.Fatalf("filter %q got %v", mn.filter, got)
-	}
-}
-
+// R-99
 func TestMenu_ScopeTabAndSubmenuEsc(t *testing.T) {
 	r := newRig(t)
 	var scopes []string
-	mn := newMenu("T", []menuRow{{ID: "a", Text: "a"}})
-	mn.onScope = func(s string) { scopes = append(scopes, s) }
+	mn := menu.New(menu.Options{Title: "T", Rows: []menu.Row{{ID: "a", Text: "a"}}, OnScope: func(s string) { scopes = append(scopes, s) }})
 	r.m.d.Scopes = fakeScopes{}
 	r.m.openMenu(mn, nil)
 	if !strings.Contains(r.view(), "Tab scope: project") {
@@ -84,10 +67,10 @@ func TestMenu_ScopeTabAndSubmenuEsc(t *testing.T) {
 	}
 	r.send(key(tea.KeyTab, 0))
 	r.send(key(tea.KeyTab, 0))
-	if strings.Join(scopes, " ") != "global project" || mn.scope != "project" {
-		t.Fatalf("scopes %v now %q", scopes, mn.scope)
+	if strings.Join(scopes, " ") != "global project" || mn.Scope() != "project" {
+		t.Fatalf("scopes %v now %q", scopes, mn.Scope())
 	}
-	sub := newMenu("Sub", []menuRow{{ID: "x", Text: "x"}})
+	sub := menu.New(menu.Options{Title: "Sub", Rows: []menu.Row{{ID: "x", Text: "x"}}})
 	r.m.openMenu(sub, mn)
 	if r.m.pick != sub {
 		t.Fatal("sub not open")
@@ -99,32 +82,6 @@ func TestMenu_ScopeTabAndSubmenuEsc(t *testing.T) {
 	r.send(key(tea.KeyEscape, 0))
 	if r.m.pick != nil {
 		t.Fatal("Esc did not close the parent")
-	}
-}
-
-func TestMenu_DimRowsSkippedAndFooterTexts(t *testing.T) {
-	mn := newMenu("T", nil)
-	drive(mn, tea.WindowSizeMsg{Width: 40, Height: 5})
-	if v := mn.View().Content; !strings.Contains(v, "nothing here") {
-		t.Fatalf("empty: %q", v)
-	}
-	mn.setItems([]menuRow{{ID: "d", Text: "dim", Dim: true}, {ID: "a", Text: "alpha"}})
-	if drive(mn, pkey(tea.KeyEnter)); mn.chosen != "a" {
-		t.Fatalf("chosen %q", mn.chosen)
-	}
-	drive(mn, ptype("z"))
-	if v := mn.View().Content; !strings.Contains(v, "nothing matches") {
-		t.Fatalf("no match: %q", v)
-	}
-	mn.confirmWith("sure?", "[y] go", func() { mn.note = "went" })
-	drive(mn, tea.KeyPressMsg{Code: tea.KeyBackspace}) // any other key cancels
-	if mn.confirm || mn.note != "" {
-		t.Fatal("cancel")
-	}
-	mn.confirmWith("sure?", "[y] go", func() { mn.note = "went" })
-	drive(mn, ptype("y"))
-	if mn.note != "went" {
-		t.Fatalf("note %q", mn.note)
 	}
 }
 
@@ -272,6 +229,7 @@ func TestConfigMenu_ToggleStepAndSave(t *testing.T) {
 	}
 }
 
+// R-99
 func TestMenus_CloseOnAskAndWorkDuringTurn(t *testing.T) {
 	r := newRig(t)
 	r.m.d.Skills = &fakeSkills{rows: []SkillRow{{Name: "deploy", Enabled: true}}}

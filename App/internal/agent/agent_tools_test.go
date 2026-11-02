@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"swarg/internal/agent/guard"
 	"swarg/internal/chat"
 )
 
@@ -305,6 +306,7 @@ func TestTools_EmptyTextWithCallsStored(t *testing.T) {
 // Scheduler
 // ---------------------------------------------------------------------------
 
+// R-8
 func TestTools_ReadOnlyRunInParallelResultsInCallOrder(t *testing.T) {
 	ft := newFakeTools()
 	ft.hold("c1", "c2", "c3")
@@ -326,6 +328,7 @@ func TestTools_ReadOnlyRunInParallelResultsInCallOrder(t *testing.T) {
 	assertHistoryValid(t, r.a.History())
 }
 
+// R-8
 func TestTools_MutatingRunOneAtATimeInOrder(t *testing.T) {
 	ft := newFakeTools()
 	ft.hold("c1", "c2", "c3")
@@ -565,6 +568,7 @@ func TestTools_TextDuringFinalAnswerStartsNewTurn(t *testing.T) {
 // MaxSteps and meter
 // ---------------------------------------------------------------------------
 
+// R-12
 func TestTools_MaxStepsEndsTheTurn(t *testing.T) {
 	r := toolRig(t, newFakeTools(), func(d *Deps) { d.MaxSteps = 3 })
 	r.a.Submit("go")
@@ -993,7 +997,7 @@ func TestRepeatGuard_SecondIdenticalFailureGetsNote(t *testing.T) {
 	wait(t, r.a)
 	got := resultsOf(c3.req)
 	if len(got) != 2 || strings.Contains(got[0], "2 times") ||
-		got[1] != "error: no background jobs"+repeatNote {
+		got[1] != "error: no background jobs"+guard.RepeatNote {
 		t.Fatalf("results = %q", got)
 	}
 	if w := r.rec.texts(EvWarning); len(w) != 0 {
@@ -1116,7 +1120,7 @@ func TestRepeatGuard_KeyOrderAndSpacingDoNotMatter(t *testing.T) {
 	c := r.p.next(t)
 	c.reply("done")
 	wait(t, r.a)
-	if got := resultsOf(c.req); len(got) != 2 || !strings.HasSuffix(got[1], repeatNote) {
+	if got := resultsOf(c.req); len(got) != 2 || !strings.HasSuffix(got[1], guard.RepeatNote) {
 		t.Fatalf("results = %q", got)
 	}
 }
@@ -1168,5 +1172,32 @@ func TestSimilarTools(t *testing.T) {
 		if got := strings.Join(similarTools(name, specs), ", "); got != want {
 			t.Errorf("similarTools(%q) = %q, want %q", name, got, want)
 		}
+	}
+}
+
+// gpt-oss through some OpenRouter providers leaks its format tokens into the tool name
+// (`edit_file<|channel|>commentary`, T14 matrix): the name is cut at the first `<|`.
+func TestNormalizeName_DropsFormatTokens(t *testing.T) {
+	cases := map[string]string{
+		"edit_file<|channel|>commentary": "edit_file",
+		" grep<|constrain|>json":         "grep",
+		"read_file":                      "read_file",
+		"mcp__demo__save":                "mcp__demo__save",
+		"<|channel|>":                    "<|channel|>", // nothing before the token: keep it, the unknown-tool error explains
+	}
+	for in, want := range cases {
+		if got := normalizeName(in); got != want {
+			t.Errorf("normalizeName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The call with a leaked format token runs the tool it names.
+func TestTools_NameWithFormatTokensRunsTheTool(t *testing.T) {
+	ft := newFakeTools()
+	r := toolRig(t, ft)
+	req := oneStep(t, r, toolCall(1, toolRead+"<|channel|>commentary", ""))
+	if got := resultsOf(req); len(got) != 1 || strings.Contains(got[0], "unknown tool") || strings.HasPrefix(got[0], "error: ") {
+		t.Fatalf("results = %q", got)
 	}
 }

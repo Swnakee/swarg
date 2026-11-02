@@ -2,9 +2,9 @@ package ui
 
 import (
 	"strings"
+	"swarg/internal/ui/hover"
 
 	"github.com/charmbracelet/x/ansi"
-	"github.com/rivo/uniseg"
 )
 
 // ---------------------------------------------------------------------------
@@ -46,37 +46,10 @@ func (s selection) ordered() (lo, hi selPoint) {
 	return s.a, s.b
 }
 
-// cellSpan returns the part of plain covering cells [c0, c1), widened to whole graphemes (a
-// wide character that is half inside counts whole), with the cell range it really covers.
-func cellSpan(plain string, c0, c1 int) (from, to int, text string) {
-	var b strings.Builder
-	col, from, to := 0, -1, 0
-	g := uniseg.NewGraphemes(plain)
-	for g.Next() {
-		w := g.Width()
-		in := col+w > c0 && col < c1
-		if w == 0 {
-			in = col >= c0 && col < c1
-		}
-		if in {
-			if from < 0 {
-				from = col
-			}
-			to = col + w
-			b.WriteString(g.Str())
-		}
-		col += w
-	}
-	if from < 0 {
-		from = 0
-	}
-	return from, to, b.String()
-}
-
 // reverseSpan puts cells [c0, c1) of a styled row in reverse video. Blank cells at the end of
 // the row (padding) are left alone.
 func reverseSpan(row string, c0, c1 int) string {
-	pre, mid, post, ok := cutSpan(row, c0, c1)
+	pre, mid, post, ok := hover.CutSpan(row, c0, c1)
 	if !ok {
 		return row
 	}
@@ -143,7 +116,7 @@ func rowText(it *convItem, row string, c0, c1, lead int) string {
 	if c1 <= 0 {
 		return ""
 	}
-	_, _, txt := cellSpan(plain, max(c0-off, 0), c1)
+	_, _, txt := hover.CellSpan(plain, max(c0-off, 0), c1)
 	return strings.TrimRight(txt, " ")
 }
 

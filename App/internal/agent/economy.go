@@ -306,17 +306,14 @@ func (a *Agent) shrinkArgs(from int) (changed bool) {
 			continue
 		}
 		calls := slices.Clone(m.ToolCalls)
-		var args map[string]string
+		args := map[string]string{}
 		for k, c := range calls {
 			if shrunk, ok := shrinkCallArgs(c); ok {
 				calls[k].Args = shrunk
-				if args == nil {
-					args = map[string]string{}
-				}
 				args[c.ID] = shrunk
 			}
 		}
-		if args != nil {
+		if len(args) > 0 {
 			a.history[i].ToolCalls, changed = calls, true
 			a.batch = append(a.batch, chat.Patch{Seq: m.Seq, Args: args})
 		}

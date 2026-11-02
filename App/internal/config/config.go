@@ -2,20 +2,20 @@
 package config
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
+	"maps"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
+
+	"swarg/internal/keys"
 )
 
 // ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ type Provider struct {
 	APIKeyEnv     string         `json:"api_key_env,omitempty"`
 	ExtraBody     map[string]any `json:"extra_body,omitempty"`
 	// Thinking is the start state of the thinking mode (R-60); false = off, as before. /think
-	// changes it in the app. ThinkingMaxTokens is the output limit while it is on (0 = 8192).
+	// changes it in the app. ThinkingMaxTokens is the output limit while it is on (0 = 16384; with max_tokens 0 also 0).
 	Thinking          bool `json:"thinking"`
 	ThinkingMaxTokens int  `json:"thinking_max_tokens,omitempty"`
 	// IdleTimeoutSec ends a stream with no bytes for this long (R-63); 0 = 600. mlx_lm.server
@@ -72,7 +72,7 @@ func (p Provider) IdleTimeout() time.Duration {
 // Prompt holds the system prompt settings.
 type Prompt struct {
 	WarnShare float64 `json:"warn_share"` // default 0.25
-	// Profile is the start prompt profile (compact, standard, full; "" = compact, R-116);
+	// Profile is the start prompt profile (low, medium, high; "" = low, R-116);
 	// Profiles maps a model pattern to a profile and wins over a provider's profile.
 	Profile  string            `json:"profile,omitempty"`
 	Profiles map[string]string `json:"profiles,omitempty"`
@@ -200,7 +200,7 @@ func Defaults() Config {
 				BaseURL:      "http://127.0.0.1:8080/v1",
 				Model:        "mlx-community/Qwen3.5-4B-4bit",
 				ContextLimit: 16384,
-				MaxTokens:    2048,
+				MaxTokens:    8192, // explicit: mlx_lm.server answers only 512 tokens without max_tokens
 				ExtraBody: map[string]any{
 					"chat_template_kwargs": map[string]any{"enable_thinking": false},
 					// Qwen3.5 non-thinking, general tasks (PLAN 5.7); the server default is greedy
@@ -220,7 +220,7 @@ func Defaults() Config {
 				BaseURL:      "http://127.0.0.1:11434/v1",
 				Model:        "qwen3.5:4b",
 				ContextLimit: 16384,
-				MaxTokens:    4096, // a 250-line file is ~2800 tokens; 2048 cut it on every model (T7)
+				MaxTokens:    8192, // a 250-line file is ~2800 tokens; 2048 cut it on every model (T7)
 				ExtraBody: map[string]any{
 					"reasoning_effort": "none",
 					"temperature":      0.7,
@@ -235,9 +235,14 @@ func Defaults() Config {
 				BaseURL:      "https://openrouter.ai/api/v1",
 				Model:        "nvidia/nemotron-3.5-lightning:free",
 				ContextLimit: 32768,
-				MaxTokens:    4096,
+				MaxTokens:    0, // no max_tokens: each model answers up to its own maximum
 				APIKeyEnv:    "OPENROUTER_API_KEY",
-				Profile:      "standard", // eval B4: compact 15/16, standard 16/16, full 14/16 (R-129)
+				Profile:      "medium", // eval B4: low 15/16, medium 16/16, high 14/16 (R-129)
+				// these providers drop gpt-oss tool calls; a config that
+				// sets extra_body.provider replaces the list
+				ExtraBody: map[string]any{
+					"provider": map[string]any{"ignore": []string{"Darkbloom", "DeepInfra", "DekaLLM"}},
+				},
 			},
 		},
 		Prompt: Prompt{WarnShare: 0.25},
@@ -253,7 +258,7 @@ func Defaults() Config {
 }
 
 // defaultThinkingMaxTokens is the output limit with thinking on: the reasoning shares it.
-const defaultThinkingMaxTokens = 8192
+const defaultThinkingMaxTokens = 16384
 
 // ThinkingBody is the part of the request body that changes with thinking on (R-60): it is laid
 // over ExtraBody. Qwen3.5 thinking preset for precise coding. An ollama provider
@@ -285,6 +290,9 @@ func (p Provider) ThinkingBody() map[string]any {
 func (p Provider) ThinkingLimit() int {
 	if p.ThinkingMaxTokens > 0 {
 		return p.ThinkingMaxTokens
+	}
+	if p.MaxTokens == 0 { // no output limit at all: the model's own maximum
+		return 0
 	}
 	return defaultThinkingMaxTokens
 }
@@ -318,13 +326,8 @@ func Load(path string, explicit bool) (Config, error) {
 	}
 
 	cfg := Defaults()
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&cfg); err != nil {
+	if err := decodeOver(&cfg, data); err != nil {
 		return Config{}, fmt.Errorf("config: parse %s: %w", path, err)
-	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return Config{}, fmt.Errorf("config: parse %s: unexpected data after the JSON value", path)
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
@@ -349,23 +352,23 @@ func (c Config) Validate() error {
 	if err := c.Prompt.validateProfiles(); err != nil {
 		return err
 	}
-	if c.Tools.MaxSteps < 1 || c.Tools.MaxSteps > 200 {
-		return fmt.Errorf("config: tools.max_steps must be between 1 and 200, got %d", c.Tools.MaxSteps)
+	if err := rangeErr("tools.max_steps", c.Tools.MaxSteps, 1, 200); err != nil {
+		return err
 	}
-	if c.Tools.BackgroundGraceSec < 0 || c.Tools.BackgroundGraceSec > 600 {
-		return fmt.Errorf("config: tools.background_grace_sec must be between 0 and 600, got %d", c.Tools.BackgroundGraceSec)
+	if err := rangeErr("tools.background_grace_sec", c.Tools.BackgroundGraceSec, 0, 600); err != nil {
+		return err
 	}
-	if c.Tools.OutputWaitSec < 0 || c.Tools.OutputWaitSec > 600 {
-		return fmt.Errorf("config: tools.output_wait_sec must be between 0 and 600, got %d", c.Tools.OutputWaitSec)
+	if err := rangeErr("tools.output_wait_sec", c.Tools.OutputWaitSec, 0, 600); err != nil {
+		return err
 	}
-	if c.Tools.ShellTimeoutSec < 1 || c.Tools.ShellTimeoutSec > 3600 {
-		return fmt.Errorf("config: tools.shell_timeout_sec must be between 1 and 3600, got %d", c.Tools.ShellTimeoutSec)
+	if err := rangeErr("tools.shell_timeout_sec", c.Tools.ShellTimeoutSec, 1, 3600); err != nil {
+		return err
 	}
 	if err := c.MCP.validate(); err != nil {
 		return err
 	}
-	if c.Web.TimeoutSec < 1 || c.Web.TimeoutSec > 120 {
-		return fmt.Errorf("config: web.timeout_sec must be between 1 and 120, got %d", c.Web.TimeoutSec)
+	if err := rangeErr("web.timeout_sec", c.Web.TimeoutSec, 1, 120); err != nil {
+		return err
 	}
 	if u := c.Web.SearxURL; u != "" {
 		if pu, err := url.Parse(u); err != nil || (pu.Scheme != "http" && pu.Scheme != "https") || pu.Host == "" {
@@ -381,17 +384,22 @@ func (c Config) Validate() error {
 	if w := c.Cost.WarnUSD; !(w >= 0) || w > 1e6 { // also refuses NaN
 		return fmt.Errorf("config: cost.warn_usd must be 0 (off) or a positive amount in USD, got %v", w)
 	}
-	if d := c.Tasks.MaxDepth; d < 0 || d > 8 {
-		return fmt.Errorf("config: tasks.max_depth must be between 0 and 8, got %d", d)
+	if err := rangeErr("tasks.max_depth", c.Tasks.MaxDepth, 0, 8); err != nil {
+		return err
 	}
-	if c.Tasks.MaxSteps < 1 || c.Tasks.MaxSteps > 200 {
-		return fmt.Errorf("config: tasks.max_steps must be between 1 and 200, got %d", c.Tasks.MaxSteps)
+	if err := rangeErr("tasks.max_steps", c.Tasks.MaxSteps, 1, 200); err != nil {
+		return err
 	}
-	if c.Tasks.MaxPerTurn < 1 || c.Tasks.MaxPerTurn > 50 {
-		return fmt.Errorf("config: tasks.max_per_turn must be between 1 and 50, got %d", c.Tasks.MaxPerTurn)
+	if err := rangeErr("tasks.max_per_turn", c.Tasks.MaxPerTurn, 1, 50); err != nil {
+		return err
 	}
-	if n := c.Agents.MaxParallel; n < 1 || n > maxParallelLimit {
-		return fmt.Errorf("config: agents.max_parallel must be between 1 and %d, got %d", maxParallelLimit, n)
+	return rangeErr("agents.max_parallel", c.Agents.MaxParallel, 1, maxParallelLimit)
+}
+
+// rangeErr is the "must be between" error for an integer key outside lo..hi (nil when inside).
+func rangeErr(key string, v, lo, hi int) error {
+	if v < lo || v > hi {
+		return fmt.Errorf("config: %s must be between %d and %d, got %d", key, lo, hi, v)
 	}
 	return nil
 }
@@ -428,13 +436,13 @@ func (p Provider) APIKey() string {
 	if p.APIKeyEnv == "" {
 		return ""
 	}
-	v, _ := UserKeys().Lookup(p.APIKeyEnv)
+	v, _ := keys.User().Lookup(p.APIKeyEnv)
 	return v
 }
 
 // NoKey is the hint for a provider whose key is missing: where to put it.
 func (p Provider) NoKey() string {
-	if f := UserKeys().File; f != "" && ValidKeyName(p.APIKeyEnv) {
+	if f := keys.User().File; f != "" && keys.ValidKeyName(p.APIKeyEnv) {
 		return fmt.Sprintf("no key: set %s or add the line %s=... to %s (chmod 600; /keys init creates it)", p.APIKeyEnv, p.APIKeyEnv, f)
 	}
 	return "no key: set " + p.APIKeyEnv
@@ -476,12 +484,7 @@ func (p Provider) Validate(name string) error {
 			return err
 		}
 	}
-	ids := make([]string, 0, len(p.ContextLimits))
-	for id := range p.ContextLimits {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
+	for _, id := range slices.Sorted(maps.Keys(p.ContextLimits)) {
 		if p.ContextLimits[id] <= 0 {
 			return fmt.Errorf("config: provider %q: context_limits[%q] must be > 0", name, id)
 		}
@@ -489,8 +492,8 @@ func (p Provider) Validate(name string) error {
 	if p.MaxParallel < 0 || p.MaxParallel > maxParallelLimit {
 		return fmt.Errorf("config: provider %q: max_parallel must be between 0 and %d, got %d", name, maxParallelLimit, p.MaxParallel)
 	}
-	if p.MaxTokens <= 0 {
-		return fmt.Errorf("config: provider %q: max_tokens must be > 0", name)
+	if p.MaxTokens < 0 {
+		return fmt.Errorf("config: provider %q: max_tokens must be >= 0 (0 = the model's own maximum)", name)
 	}
 	if p.ThinkingMaxTokens < 0 {
 		return fmt.Errorf("config: provider %q: thinking_max_tokens must be >= 0", name)
@@ -542,12 +545,7 @@ var mcpName = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 
 // validate checks every server entry: the name, command xor url, the timeout and the allowlist.
 func (m MCP) validate() error {
-	names := make([]string, 0, len(m.Servers))
-	for n := range m.Servers {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
+	for _, n := range slices.Sorted(maps.Keys(m.Servers)) {
 		s := m.Servers[n]
 		switch {
 		case !mcpName.MatchString(n):

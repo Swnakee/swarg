@@ -18,7 +18,8 @@ const testBase = "You are swarg, a coding assistant running in the user's termin
 	"Use the tools to read, edit and run things in the project folder; do not guess file contents.\n" +
 	"Be concise. Use Markdown; put code in fenced blocks with a language tag.\n" +
 	"Answer in the language the user writes in.\n" +
-	"The user already sees tool output. Do not repeat it; summarize in 1-2 sentences."
+	"The user already sees tool output. Do not repeat it; summarize in 1-2 sentences.\n" +
+	"Give no time estimates (\"5 minutes\"); report progress as facts."
 
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
@@ -36,7 +37,7 @@ func testEnv(dir string) Env {
 
 func envBlock(dir string) string {
 	return "OS: darwin\nShell: zsh\nWorking directory: " + dir +
-		"\nDate: 2026-10-26\nModel: qwen"
+		"\nGit repo: no\nDate: 2026-10-26\nModel: qwen"
 }
 
 func blockNames(s *Set) []string {
@@ -579,5 +580,75 @@ func TestSetText_ReplacesAndEmptyLeavesNoGap(t *testing.T) {
 	}
 	if err := set.SetText("nope", "x"); err == nil {
 		t.Fatal("unknown block accepted")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// R-135 project rules file fallback, R-136 Git repo line
+// ---------------------------------------------------------------------------
+
+func TestLoad_ProjectFileFallback_R135(t *testing.T) {
+	tests := []struct {
+		name  string
+		files []string // created in cwd, each with text "from <file>"
+		want  string   // "" means no project block
+	}{
+		{"SWARG.md alone", []string{"SWARG.md"}, "from SWARG.md"},
+		{"AGENTS.md alone", []string{"AGENTS.md"}, "from AGENTS.md"},
+		{"CLAUDE.md alone", []string{"CLAUDE.md"}, "from CLAUDE.md"},
+		{"SWARG.md wins over both", []string{"CLAUDE.md", "AGENTS.md", "SWARG.md"}, "from SWARG.md"},
+		{"AGENTS.md wins over CLAUDE.md", []string{"CLAUDE.md", "AGENTS.md"}, "from AGENTS.md"},
+		{"none", nil, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cwd := t.TempDir()
+			for _, f := range tt.files {
+				writeFile(t, filepath.Join(cwd, f), "from "+f)
+			}
+			s, _ := mustLoad(t, t.TempDir(), cwd)
+			got := ""
+			for _, b := range s.blocks {
+				if b.Name == nameProject {
+					got = b.Text
+				}
+			}
+			if got != tt.want {
+				t.Errorf("project text = %q, want %q (no stacking)", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestInGitRepo_R136(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "a", "b")
+	writeFile(t, filepath.Join(sub, "f.txt"), "x")
+	if InGitRepo(sub) {
+		t.Fatal("no .git anywhere: want false")
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !InGitRepo(sub) {
+		t.Error(".git directory in a parent: want true")
+	}
+	wt := t.TempDir() // a worktree has a .git FILE
+	writeFile(t, filepath.Join(wt, ".git"), "gitdir: elsewhere")
+	if !InGitRepo(wt) {
+		t.Error(".git file: want true")
+	}
+}
+
+func TestEnvText_GitRepoLine_R136(t *testing.T) {
+	for _, tt := range []struct {
+		git  bool
+		want string
+	}{{true, "Git repo: yes"}, {false, "Git repo: no"}} {
+		e := testEnv("/w")
+		e.Git = tt.git
+		if got := envText(e); !strings.Contains(got, "\n"+tt.want+"\n") {
+			t.Errorf("git=%v: env block %q lacks %q", tt.git, got, tt.want)
+		}
 	}
 }

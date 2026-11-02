@@ -5,14 +5,16 @@ package agents
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 
+	"swarg/internal/prompt"
 	"swarg/internal/skills"
 	"swarg/internal/tools"
 )
@@ -39,7 +41,7 @@ var namePattern = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 type Type struct {
 	Name, Description string
 	Server, Model     string   // "" or "inherit" = the Session's current Source / model
-	Profile           string   // "" or "inherit" -> compact; else compact|standard|full
+	Profile           string   // "" or "inherit" -> low; else low|medium|high (an old name is read as the new one, R-134)
 	Tools             []string // tool names; "*" = every tool; "readonly" = every read-only tool; empty = ["*"]
 	MaxSteps          int      // 0 = the default of the agent runtime
 	Body              string   // markdown body = the agent's own instructions
@@ -120,11 +122,7 @@ func (s *Set) fill() []string {
 			byName[t.Name] = t
 		}
 	}
-	s.types = s.types[:0:0]
-	for _, t := range byName {
-		s.types = append(s.types, t)
-	}
-	sort.Slice(s.types, func(i, j int) bool { return s.types[i].Name < s.types[j].Name })
+	s.types = slices.SortedFunc(maps.Values(byName), func(a, b *Type) int { return strings.Compare(a.Name, b.Name) })
 	s.sig = s.signature()
 	return warnings
 }
@@ -180,10 +178,12 @@ func read(path, name, source string) (*Type, error) {
 		Name: name, Description: meta["description"], Server: meta["server"], Model: meta["model"],
 		Profile: meta["profile"], Body: body, Source: source, Path: path, Enabled: true,
 	}
-	switch t.Profile {
-	case "", inherit, "compact", "standard", "full":
-	default:
-		return nil, fmt.Errorf("%s: profile %q must be inherit, compact, standard or full", path, t.Profile)
+	if t.Profile != "" && t.Profile != inherit {
+		pr, err := prompt.ParseProfile(t.Profile)
+		if err != nil {
+			return nil, fmt.Errorf("%s: profile %q must be inherit, low, medium or high", path, t.Profile)
+		}
+		t.Profile = string(pr)
 	}
 	for _, item := range strings.Split(meta["tools"], ",") {
 		if item = strings.TrimSpace(item); item != "" {
@@ -276,10 +276,8 @@ const blockTail = `Delegate when: the job reads many files or prints long output
 Do not delegate: a single known file to read, one grep, or a step you need the result of right now to decide the next one. After a helper reports, check its result before you rely on it.`
 
 func (s *Set) find(name string) *Type {
-	for _, t := range s.types {
-		if t.Name == name {
-			return t
-		}
+	if i := slices.IndexFunc(s.types, func(t *Type) bool { return t.Name == name }); i >= 0 {
+		return s.types[i]
 	}
 	return nil
 }

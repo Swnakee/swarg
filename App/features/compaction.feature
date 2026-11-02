@@ -95,7 +95,7 @@ Feature: Compaction
 
   Rule: Auto-compaction runs between Turns when the context is nearly full
 
-    @S-159
+    @S-159 @R-23
     Scenario: Auto-compaction at 70 percent
       Given a context limit of 10000 tokens
       And auto-compaction at 70 percent
@@ -105,7 +105,7 @@ Feature: Compaction
       When the user submits "next"
       Then the history holds one WorkSummary
 
-    @S-160
+    @S-160 @R-23
     Scenario: Just below the threshold nothing is compacted
       Given a context limit of 10000 tokens
       And auto-compaction at 70 percent
@@ -114,7 +114,7 @@ Feature: Compaction
       When the user submits "next"
       Then no summary request was sent
 
-    @S-161
+    @S-161 @R-23
     Scenario: Auto-compaction stops after two failures in a row
       Given a context limit of 10000 tokens
       And auto-compaction at 70 percent
@@ -123,7 +123,7 @@ Feature: Compaction
       When the user submits 3 Turns in a row
       Then exactly 2 summary requests were sent and a warning says auto-compaction is off
 
-    @S-162
+    @S-162 @R-23
     Scenario: A manual Compaction re-enables auto-compaction
       Given a context limit of 10000 tokens
       And auto-compaction at 70 percent
@@ -133,7 +133,7 @@ Feature: Compaction
       When the user compacts the Session
       Then the next Turn at 70 percent compacts again
 
-    @S-163
+    @S-163 @R-23
     Scenario: Auto-compaction runs before the next queued text
       Given a context limit of 10000 tokens
       And auto-compaction at 70 percent

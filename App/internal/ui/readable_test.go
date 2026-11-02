@@ -16,6 +16,7 @@ import (
 
 	"swarg/internal/agent"
 	"swarg/internal/chat"
+	"swarg/internal/ui/hover"
 )
 
 // ---------------------------------------------------------------------------
@@ -350,7 +351,7 @@ func TestReadable_HoverInEveryProfile(t *testing.T) {
 				}
 				r.hoverTo(3, y)
 				raw := r.m.View().Content
-				if !strings.Contains(strings.Split(raw, "\n")[y], underlineOn) {
+				if !strings.Contains(strings.Split(raw, "\n")[y], hover.UnderlineOn) {
 					t.Errorf("row %d (%q) not underlined on hover", y, row)
 				}
 				if bad := unreadable(downsample(raw, p), p); len(bad) > 0 {

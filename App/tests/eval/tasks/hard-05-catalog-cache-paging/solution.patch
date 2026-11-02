@@ -1,0 +1,76 @@
+diff -ruN a/catalog/cache.py ref/catalog/cache.py
+--- a/catalog/cache.py	2026-11-01 03:39:13
++++ ref/catalog/cache.py	2026-11-01 03:39:08
+@@ -15,9 +15,10 @@
+         if entry is None:
+             return None
+         value, stored_at = entry
+-        if self.clock() - stored_at > self.ttl:
++        if self.clock() - stored_at >= self.ttl:
+             del self.data[key]
+             return None
++        self.data.move_to_end(key)
+         return value
+ 
+     def put(self, key, value):
+diff -ruN a/catalog/pagination.py ref/catalog/pagination.py
+--- a/catalog/pagination.py	2026-11-01 03:39:13
++++ ref/catalog/pagination.py	2026-11-01 03:39:08
+@@ -15,6 +15,6 @@
+     if page < 1 or page_size < 1:
+         raise ValueError("page and page_size must be >= 1")
+     total = len(rows)
+-    total_pages = total // page_size
+-    start = page * page_size
++    total_pages = -(-total // page_size)
++    start = (page - 1) * page_size
+     return Page(rows[start:start + page_size], page, page_size, total, total_pages, page < total_pages)
+diff -ruN a/catalog/service.py ref/catalog/service.py
+--- a/catalog/service.py	2026-11-01 03:39:13
++++ ref/catalog/service.py	2026-11-01 03:39:13
+@@ -16,36 +16,39 @@
+         if item["id"] in self.store.items:
+             raise ValueError("duplicate id %r" % item["id"])
+         self.store.items[item["id"]] = dict(item)
++        self.cache.clear()
+ 
+     def update_item(self, item_id, **fields):
+         if item_id not in self.store.items:
+             raise KeyError(item_id)
+         self.store.items[item_id].update(fields)
+-        self.cache.invalidate(("item", item_id))
++        self.cache.clear()
+         return dict(self.store.items[item_id])
+ 
+     def delete_item(self, item_id):
+         if item_id not in self.store.items:
+             raise KeyError(item_id)
+         del self.store.items[item_id]
++        self.cache.clear()
+ 
+     # -- reads -------------------------------------------------------------
+     def get_item(self, item_id):
+         key = ("item", item_id)
+         hit = self.cache.get(key)
+         if hit is not None:
+-            return hit
++            return copy.deepcopy(hit)
+         item = dict(self.store.get(item_id))
+         self.cache.put(key, item)
+-        return item
++        return copy.deepcopy(item)
+ 
+     def list_items(self, category=None, sort="id", desc=False, page=1, page_size=10):
+-        key = ("list", category, page)
++        key = ("list", category, sort, desc, page, page_size)
+         hit = self.cache.get(key)
+         if hit is not None:
+-            return hit
++            return copy.deepcopy(hit)
+         rows = [i for i in self.store.scan() if category is None or i["category"] == category]
++        rows.sort(key=lambda i: i["id"])
+         rows.sort(key=lambda i: i[sort], reverse=desc)
+         result = paginate(rows, page, page_size)
+         self.cache.put(key, result)
+-        return result
++        return copy.deepcopy(result)

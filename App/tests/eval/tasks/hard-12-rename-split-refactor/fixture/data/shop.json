@@ -1,0 +1,11 @@
+{
+ "customers": [
+  {"customer_id": 1, "name": "Ada Lovelace", "email": "ada@example.com", "balance_cents": 125050, "tier": "gold"},
+  {"customer_id": 2, "name": "Grace Hopper", "email": "grace@example.com", "balance_cents": 990, "tier": "basic"}
+ ],
+ "orders": [
+  {"order_id": 1, "customer_id": 1, "amount_cents": 250000, "status": "paid"},
+  {"order_id": 2, "customer_id": 1, "amount_cents": 1999, "status": "cancelled"},
+  {"order_id": 3, "customer_id": 2, "amount_cents": 4500}
+ ]
+}

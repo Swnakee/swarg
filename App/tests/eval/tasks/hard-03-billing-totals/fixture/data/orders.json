@@ -1,0 +1,6 @@
+[
+ {"id":"o1","customer_id":"c1","customer_name":"Acme Ltd","region":"NY","loyalty":true,
+  "lines":[{"sku":"bolt","qty":300,"unit_price":"0.835"},{"sku":"manual","qty":1,"unit_price":"12.00","taxable":false}]},
+ {"id":"o2","customer_id":"c1","customer_name":"ACME LTD","region":"NY","lines":[{"sku":"nut","qty":4,"unit_price":"25.00"}]},
+ {"id":"o3","customer_id":"c2","customer_name":"Globex","region":"CA","lines":[{"sku":"gear","qty":2,"unit_price":"249.99"}]}
+]

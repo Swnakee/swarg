@@ -30,11 +30,11 @@ type agentHost struct {
 	model   func() string // the Session's model
 }
 
-// Types are the enabled types, none under the compact profile: compact never offers or
+// Types are the enabled types, none under the low profile: low never offers or
 // describes the `agent` Tool (R-123, I-40).
 func (h *agentHost) Types() []agent.AgentType {
 	reloadAgents(h.set, h.ps)
-	if h.profile() == string(prompt.Compact) {
+	if h.profile() == string(prompt.Low) {
 		return nil
 	}
 	var out []agent.AgentType
@@ -74,7 +74,7 @@ func (h *agentHost) Open(t agent.AgentType) (agent.AgentRun, error) {
 	case server != h.srcs.Current():
 		model = h.srcs.recent.First(server, p.Model)
 	}
-	profile := prompt.Compact
+	profile := prompt.Low
 	if !inherits(t.Profile) {
 		if pr, err := prompt.ParseProfile(t.Profile); err == nil {
 			profile = pr

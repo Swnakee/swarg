@@ -3,6 +3,8 @@ package ui
 import (
 	"regexp"
 	"strings"
+	"swarg/internal/ui/command"
+	"swarg/internal/ui/menu"
 )
 
 // ---------------------------------------------------------------------------
@@ -19,7 +21,7 @@ const keyWarnText = "this looks like an API key, so it was not sent. Keys go in 
 	"Press Enter again to send the text anyway, or edit it."
 
 // keysCmd is /keys (the menu) or /keys init (the template, then the menu).
-func (m *model) keysCmd(c Command) {
+func (m *model) keysCmd(c command.Command) {
 	if m.d.Keys == nil {
 		m.say("the key store is not available here")
 		return
@@ -42,14 +44,15 @@ func (m *model) initKeys() string {
 // keysMenu lists every key the config uses plus the ones in the files: name, state, the masked value
 // and who uses it. It is view only (R-108): r re-reads the files, i creates the template when there
 // is no keys file; the footer shows the file.
-func (m *model) keysMenu() *menu {
-	mn := newMenu("API keys (global)", nil)
-	mn.hint = Clean(m.d.Keys.File()) + "   r reload   i create file   Esc close"
-	mn.empty = "no keys used by the config   i creates " + Clean(m.d.Keys.File()) + "   Esc close"
+func (m *model) keysMenu() *menu.Menu {
+	var mn *menu.Menu
+	o := menuOpts("API keys (global)", nil)
+	o.Hint = Clean(m.d.Keys.File()) + "   r reload   i create file   Esc close"
+	o.Empty = "no keys used by the config   i creates " + Clean(m.d.Keys.File()) + "   Esc close"
 	warn := func(ok string) {
-		mn.note = ok
+		mn.SetNote(ok)
 		if w := m.d.Keys.Warnings(); len(w) > 0 {
-			mn.note = Clean(strings.Join(w, "; "))
+			mn.SetNote(Clean(strings.Join(w, "; ")))
 		}
 	}
 	rebuild := func() {
@@ -58,22 +61,21 @@ func (m *model) keysMenu() *menu {
 		for i, k := range rows {
 			cells[i] = []string{"  " + Clean(k.Name), Clean(k.State), Clean(k.Masked), Clean(strings.Join(k.Users, ", "))}
 		}
-		items := make([]menuRow, len(rows))
-		for i, t := range columns(cells) {
-			items[i] = menuRow{ID: rows[i].Name, Text: t, Match: rows[i].Name + " " + strings.Join(rows[i].Users, " ")}
-		}
-		mn.setItems(items)
+		mn.SetRows(columnRows(cells, func(i int) menu.Row {
+			return menu.Row{ID: rows[i].Name, Match: rows[i].Name + " " + strings.Join(rows[i].Users, " ")}
+		}))
 	}
 	reload := func(string) {
 		rebuild()
 		warn("reloaded")
 	}
-	mn.keys["r"] = reload
-	mn.keys["i"] = func(string) {
-		mn.note = m.initKeys()
+	o.Keys["r"] = reload
+	o.Keys["i"] = func(string) {
+		mn.SetNote(m.initKeys())
 		rebuild()
 	}
-	mn.onChoose = func(string) bool { return false }
+	o.OnChoose = func(string) bool { return false }
+	mn = menu.New(o)
 	rebuild()
 	warn("")
 	return mn

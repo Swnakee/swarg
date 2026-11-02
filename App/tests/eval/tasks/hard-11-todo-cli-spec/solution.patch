@@ -1,0 +1,195 @@
+diff -ruN a/todo.py ref/todo.py
+--- a/todo.py	1970-01-01 03:00:00
++++ ref/todo.py	2026-11-01 03:47:45
+@@ -0,0 +1,191 @@
++"""To-do CLI. See CLI.md."""
++import argparse
++import csv
++import datetime
++import io
++import json
++import os
++import sys
++
++
++class Fail(Exception):
++    def __init__(self, code, msg):
++        super().__init__(msg)
++        self.code = code
++
++
++class Parser(argparse.ArgumentParser):
++    def error(self, message):
++        self.print_usage(sys.stderr)
++        sys.stderr.write("error: %s\n" % message)
++        raise SystemExit(2)
++
++
++def today():
++    t = os.environ.get("TODO_TODAY")
++    return datetime.date.fromisoformat(t) if t else datetime.date.today()
++
++
++def load(path):
++    if not os.path.exists(path):
++        return {"next_id": 1, "tasks": []}
++    try:
++        with open(path, encoding="utf-8") as f:
++            db = json.load(f)
++        if not (isinstance(db, dict) and isinstance(db.get("tasks"), list) and isinstance(db.get("next_id"), int)):
++            raise ValueError
++    except (ValueError, OSError):
++        raise Fail(5, "database is corrupt: %s" % path)
++    return db
++
++
++def save(path, db):
++    tmp = path + ".tmp"
++    with open(tmp, "w", encoding="utf-8") as f:
++        json.dump(db, f)
++    os.replace(tmp, path)
++
++
++def valid_date(s):
++    if len(s) != 10:
++        raise Fail(2, "bad date %r" % s)
++    try:
++        datetime.date.fromisoformat(s)
++    except ValueError:
++        raise Fail(2, "bad date %r" % s)
++    return s
++
++
++def find(db, tid):
++    for t in db["tasks"]:
++        if t["id"] == tid:
++            return t
++    raise Fail(4, "no such task #%d" % tid)
++
++
++def cmd_add(a, db):
++    text = a.text.strip()
++    if not text:
++        raise Fail(2, "empty text")
++    due = valid_date(a.due) if a.due is not None else None
++    tags = []
++    for tag in a.tag or []:
++        tag = tag.strip().lower()
++        if tag and tag not in tags:
++            tags.append(tag)
++    tid = db["next_id"]
++    db["next_id"] = tid + 1
++    db["tasks"].append({"id": tid, "text": text, "prio": a.prio, "due": due, "done": False, "tags": tags})
++    print("added #%d" % tid)
++    return True
++
++
++def cmd_list(a, db):
++    rows = [t for t in db["tasks"] if a.all or not t["done"]]
++    if a.tag:
++        want = a.tag.strip().lower()
++        rows = [t for t in rows if want in t["tags"]]
++    if a.sort == "prio":
++        rows.sort(key=lambda t: (t["prio"], t["id"]))
++    elif a.sort == "due":
++        rows.sort(key=lambda t: (t["due"] is None, t["due"] or "", t["id"]))
++    else:
++        rows.sort(key=lambda t: t["id"])
++    if not rows:
++        print("no tasks")
++    for t in rows:
++        print("%3d [%s] p%d %s %s%s" % (t["id"], "x" if t["done"] else " ", t["prio"], t["due"] or "----------",
++                                       t["text"], "".join(" #" + g for g in t["tags"])))
++    return False
++
++
++def cmd_done(a, db):
++    t = find(db, a.id)
++    if t["done"]:
++        raise Fail(3, "task #%d is already done" % a.id)
++    t["done"] = True
++    print("done #%d" % a.id)
++    return True
++
++
++def cmd_rm(a, db):
++    t = find(db, a.id)
++    db["tasks"].remove(t)
++    print("removed #%d" % a.id)
++    return True
++
++
++def cmd_stats(a, db):
++    ts = db["tasks"]
++    now = today().isoformat()
++    print("total: %d" % len(ts))
++    print("open: %d" % sum(not t["done"] for t in ts))
++    print("done: %d" % sum(t["done"] for t in ts))
++    print("overdue: %d" % sum(1 for t in ts if not t["done"] and t["due"] and t["due"] < now))
++    return False
++
++
++def cmd_export(a, db):
++    ts = sorted(db["tasks"], key=lambda t: t["id"])
++    if a.format == "json":
++        out = json.dumps(ts) + "\n"
++    else:
++        buf = io.StringIO()
++        w = csv.writer(buf, lineterminator="\n")
++        w.writerow(["id", "text", "prio", "due", "done", "tags"])
++        for t in ts:
++            w.writerow([t["id"], t["text"], t["prio"], t["due"] or "", "yes" if t["done"] else "no", ";".join(t["tags"])])
++        out = buf.getvalue()
++    if a.output:
++        with open(a.output, "w", encoding="utf-8", newline="") as f:
++            f.write(out)
++    else:
++        sys.stdout.write(out)
++    return False
++
++
++def build():
++    p = Parser(prog="todo.py")
++    p.add_argument("--db", default="todo.json")
++    sub = p.add_subparsers(dest="cmd", parser_class=Parser)
++    s = sub.add_parser("add")
++    s.add_argument("text")
++    s.add_argument("--prio", type=int, choices=(1, 2, 3), default=2)
++    s.add_argument("--due")
++    s.add_argument("--tag", action="append")
++    s.set_defaults(fn=cmd_add)
++    s = sub.add_parser("list")
++    s.add_argument("--all", action="store_true")
++    s.add_argument("--tag")
++    s.add_argument("--sort", choices=("id", "prio", "due"), default="id")
++    s.set_defaults(fn=cmd_list)
++    for name, fn in (("done", cmd_done), ("rm", cmd_rm)):
++        s = sub.add_parser(name)
++        s.add_argument("id", type=int)
++        s.set_defaults(fn=fn)
++    s = sub.add_parser("stats")
++    s.set_defaults(fn=cmd_stats)
++    s = sub.add_parser("export")
++    s.add_argument("--format", required=True, choices=("csv", "json"))
++    s.add_argument("-o", "--output")
++    s.set_defaults(fn=cmd_export)
++    return p
++
++
++def main(argv=None):
++    p = build()
++    a = p.parse_args(argv)
++    if not a.cmd:
++        p.error("a command is required")
++    try:
++        db = load(a.db)
++        if a.fn(a, db):
++            save(a.db, db)
++    except Fail as e:
++        sys.stderr.write("error: %s\n" % e)
++        return e.code
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())

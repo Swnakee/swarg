@@ -57,6 +57,7 @@ type Opened struct {
 	Model   string
 	Think   bool               // the thinking mode at the end of the session (R-60)
 	Spend   map[string]float64 // the cost so far per model (R-111)
+	Tokens  agent.Tokens       // the token usage so far (R-131)
 	Title   string
 }
 
@@ -274,6 +275,7 @@ type Deps struct {
 	Keys        KeysAPI        // optional: /keys and the Keys row of /config (nil = the command says so)
 	History     []chat.Message // optional: the list is pre-filled from it at startup (a resumed session)
 	SavedHint   string         // optional: main prints it after Run returns (e.g. "session saved: swarg --continue"); the UI prints nothing
+	Tokens      int            // the Session tokens used at start (R-131); EvSpend events update the panel
 	Spend       float64        // the Session spend in USD at start (a resumed session); EvSpend events update the panel
 	Think       bool           // the thinking mode at start; EvThinking events update the Bottom panel
 	Model       string         // the Model choice at start; EvModel events update the Bottom panel

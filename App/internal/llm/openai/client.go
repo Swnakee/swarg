@@ -2,13 +2,14 @@ package openai
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -320,7 +321,7 @@ func pump(ctx context.Context, body io.ReadCloser, idle time.Duration, ch chan<-
 	switch {
 	case errors.Is(err, errDone), errors.Is(err, errCanceled):
 		return
-	case ir.timedOut():
+	case ir.fired.Load():
 		err = fmt.Errorf("model server stopped responding (idle %s)", idle)
 	case err == nil:
 		err = errors.New("stream ended before [DONE]")
@@ -397,6 +398,14 @@ type wireUsage struct {
 	Cost json.RawMessage `json:"cost"` // OpenRouter: credits (USD) charged; absent on other servers, read leniently (I-39)
 }
 
+// text emits an event of kind carrying s; an empty s emits nothing.
+func (p *pumper) text(kind chat.EventKind, s string) error {
+	if s == "" {
+		return nil
+	}
+	return p.emit(chat.StreamEvent{Kind: kind, Text: s})
+}
+
 // chunk handles one JSON data event: delta text, finish reason and usage.
 func (p *pumper) chunk(data string) error {
 	var c wireChunk
@@ -405,26 +414,16 @@ func (p *pumper) chunk(data string) error {
 	}
 	if len(c.Choices) > 0 {
 		first := c.Choices[0]
-		reasoning := first.Delta.ReasoningContent
-		if reasoning == "" {
-			reasoning = first.Delta.Reasoning
+		if err := p.text(chat.EventReasoning, cmp.Or(first.Delta.ReasoningContent, first.Delta.Reasoning)); err != nil {
+			return err
 		}
-		if reasoning != "" {
-			if err := p.emit(chat.StreamEvent{Kind: chat.EventReasoning, Text: reasoning}); err != nil {
-				return err
-			}
-		}
-		if first.Delta.Content != "" {
-			if err := p.emit(chat.StreamEvent{Kind: chat.EventDelta, Text: first.Delta.Content}); err != nil {
-				return err
-			}
+		if err := p.text(chat.EventDelta, first.Delta.Content); err != nil {
+			return err
 		}
 		for _, d := range first.Delta.ToolCalls {
 			p.addCall(d)
-			if d.Function.Arguments != "" {
-				if err := p.emit(chat.StreamEvent{Kind: chat.EventToolDelta, Text: d.Function.Arguments}); err != nil {
-					return err
-				}
+			if err := p.text(chat.EventToolDelta, d.Function.Arguments); err != nil {
+				return err
 			}
 		}
 		if first.FinishReason != nil {
@@ -473,7 +472,7 @@ func (p *pumper) toolCalls() []chat.ToolCall {
 	if len(p.calls) == 0 {
 		return nil
 	}
-	sort.SliceStable(p.calls, func(i, j int) bool { return p.calls[i].idx < p.calls[j].idx })
+	slices.SortStableFunc(p.calls, func(a, b *pendingCall) int { return cmp.Compare(a.idx, b.idx) })
 	out := make([]chat.ToolCall, len(p.calls))
 	for i, c := range p.calls {
 		out[i] = chat.ToolCall{ID: c.id, Name: c.name, Args: c.args.String()}
@@ -522,9 +521,4 @@ func (ir *idleReader) Read(p []byte) (int, error) {
 	n, err := ir.body.Read(p)
 	ir.timer.Stop()
 	return n, err
-}
-
-// timedOut reports whether the idle timer closed the body.
-func (ir *idleReader) timedOut() bool {
-	return ir.fired.Load()
 }

@@ -18,7 +18,7 @@ import (
 const maxListEntries = 500
 
 // ListDir lists one folder inside the project.
-type ListDir struct{}
+type ListDir struct{ readOnlyTool }
 
 // Spec describes list_dir for the model.
 func (ListDir) Spec() chat.ToolSpec {
@@ -31,12 +31,6 @@ func (ListDir) Spec() chat.ToolSpec {
 			`"required":[]}`),
 	}
 }
-
-// ReadOnly is true: list_dir never changes files.
-func (ListDir) ReadOnly() bool { return true }
-
-// Confirm is false: list_dir runs without approval.
-func (ListDir) Confirm() bool { return false }
 
 // Block is the system prompt text for list_dir.
 func (ListDir) Block() string {

@@ -3,14 +3,14 @@ Feature: The InputQueue
 
   Rule: Queued input is injected at the next Step of the running Turn
 
-    @S-014
+    @S-014 @R-1
     Scenario: A message sent during an answer is sent after it
       Given a Provider that is answering "A" and then will answer "B"
       And the user submitted "first" and the Turn is running
       When the user submits "second"
       Then the Session history is first, "A", second, "B" in that order
 
-    @S-015
+    @S-015 @R-1
     Scenario: A queued message does not cut the running answer
       Given a Provider that is answering "A" and then will answer "B"
       And the user submitted "first" and the Turn is running

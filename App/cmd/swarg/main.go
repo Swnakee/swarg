@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 	"swarg/internal/skills"
 	"swarg/internal/tools"
 	"swarg/internal/ui"
+	"swarg/internal/webget"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
@@ -73,9 +75,7 @@ func run() (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	for _, w := range layers.Warnings { // a project file tried to lower safety (R-96)
-		fmt.Fprintf(os.Stderr, "swarg: %s\n", w)
-	}
+	warn(os.Stderr, layers.Warnings...) // a project file tried to lower safety (R-96)
 	cfg.Override(o.providerOverride())
 	if err := cfg.Validate(); err != nil {
 		return 2, err
@@ -118,13 +118,9 @@ func run() (int, error) {
 		all = tools.FreeWeb(all)
 	}
 	sk, skWarnings := skills.Load(filepath.Join(dir, "skills"), cwd, cfg.Skills.Disabled)
-	for _, w := range skWarnings {
-		fmt.Fprintf(os.Stderr, "swarg: %s\n", w)
-	}
+	warn(os.Stderr, skWarnings...)
 	ag, agWarnings := agents.Load(filepath.Join(dir, "agents"), cwd, cfg.Agents.Disabled)
-	for _, w := range agWarnings {
-		fmt.Fprintf(os.Stderr, "swarg: %s\n", w)
-	}
+	warn(os.Stderr, agWarnings...)
 	if sk.Len() > 0 { // no Skills: no skill Tool, no list (R-89)
 		all = append(all, sk.Tool())
 	}
@@ -146,14 +142,10 @@ func run() (int, error) {
 		mc = mcp.New(cfg.MCP.Servers, mcp.Deps{Dir: cwd, Confirm: cfg.MCP.Confirm, Project: layers.ProjectServers,
 			Approved:  func(n string) bool { return approvals.Approved(cwd, n, cfg.MCP.Servers[n]) },
 			OnApprove: func(n string) error { return approvals.Approve(cwd, n, cfg.MCP.Servers[n]) }})
-		for _, w := range mc.Start(context.Background()) { // a failed server is a warning, not an exit (I-31)
-			fmt.Fprintf(os.Stderr, "swarg: %s\n", w)
-		}
+		warn(os.Stderr, mc.Start(context.Background())...) // a failed server is a warning, not an exit (I-31)
 		defer mc.Close()
 	}
-	if w := extraPromptWarning(sk, mc); w != "" {
-		fmt.Fprintf(os.Stderr, "swarg: %s\n", w)
-	}
+	warn(os.Stderr, extraPromptWarning(sk, mc))
 	jobs := tools.NewJobs()
 	defer jobs.KillAll() // runs before main's os.Exit on every return path
 	var cl cleanups      // session and trace files; run on every exit path, signals included
@@ -185,9 +177,7 @@ func run() (int, error) {
 		fmt.Fprintf(os.Stderr, "swarg: continuing with the session's model %s (--model changes it)\n", sv.model)
 	}
 	set, warnings, err := prompt.Load(filepath.Join(dir, "blocks"), cwd, promptEnv(cwd, model), promptBlocks(ts, cfg.Tasks.MaxDepth, sk, mc)...)
-	for _, w := range warnings {
-		fmt.Fprintf(os.Stderr, "swarg: %s\n", w)
-	}
+	warn(os.Stderr, warnings...)
 	if err != nil {
 		return 2, err
 	}
@@ -216,7 +206,7 @@ func run() (int, error) {
 		BackgroundGrace: time.Duration(cfg.Tools.BackgroundGraceSec) * time.Second,
 		// shell_output waits this long for a running job to end (fewer polls)
 		OutputWait: time.Duration(cfg.Tools.OutputWaitSec) * time.Second,
-		Web: tools.Web{SearxURL: cfg.Web.SearxURL, AllowPrivate: cfg.Web.AllowPrivate,
+		Web: webget.Getter{SearxURL: cfg.Web.SearxURL, AllowPrivate: cfg.Web.AllowPrivate,
 			Timeout: time.Duration(cfg.Web.TimeoutSec) * time.Second},
 	}}
 	host := &agentHost{set: ag, cfg: &cfg, ps: set, srcs: srcs, runner: runner, profile: pf.Profile}
@@ -246,7 +236,7 @@ func run() (int, error) {
 		Agents:       host.Deps(),
 	})
 	if len(sv.history) > 0 {
-		if err := a.Load(sv.history, agent.WithMaxSeq(sv.maxSeq), agent.WithThinking(sv.thinking), agent.WithSpend(sv.spend)); err != nil {
+		if err := a.Load(sv.history, agent.WithMaxSeq(sv.maxSeq), agent.WithThinking(sv.thinking), agent.WithSpend(sv.spend), agent.WithTokens(sv.tokens)); err != nil {
 			return 1, err
 		}
 	}
@@ -278,6 +268,7 @@ func run() (int, error) {
 		Model:       model,
 		Think:       think,
 		Spend:       totalOf(sv.spend),
+		Tokens:      sv.tokens.Total(),
 		Cost:        srcs,
 		Project:     filepath.Base(cwd),
 		Limit:       srcs.limitFor(cfg.Provider)(first), // the initial value; EvMeter carries the live one
@@ -317,6 +308,12 @@ func run() (int, error) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// tokensOf is the token usage of a loaded SessionFile (R-131).
+func tokensOf(l session.Loaded) agent.Tokens {
+	t := l.Tokens()
+	return agent.Tokens{Prompt: t.In, Cached: t.Cached, Completion: t.Out}
+}
 
 // totalOf is the sum of a per-model spend map.
 func totalOf(by map[string]float64) (t float64) {
@@ -383,6 +380,7 @@ func promptEnv(cwd, model string) prompt.Env {
 		Dir:   cwd,
 		Date:  time.Now().Format("2006-01-02"),
 		Model: model,
+		Git:   prompt.InGitRepo(cwd),
 	}
 }
 
@@ -409,4 +407,13 @@ func runUI(d ui.Deps) error {
 // isTTY reports whether stdin and stdout are terminals (the full-screen UI runs).
 func isTTY() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+// warn prints each non-empty msg as a "swarg: ..." notice to w.
+func warn(w io.Writer, msgs ...string) {
+	for _, m := range msgs {
+		if m != "" {
+			fmt.Fprintf(w, "swarg: %s\n", m)
+		}
+	}
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"swarg/internal/config"
+	"swarg/internal/keys"
 )
 
 // ---------------------------------------------------------------------------
@@ -54,7 +55,7 @@ func dialStdio(dir string, s config.MCPServer) (Transport, error) {
 	cmd.Dir = dir
 	cmd.Env = os.Environ()
 	for k, v := range s.Env {
-		cmd.Env = append(cmd.Env, k+"="+config.UserKeys().Expand(v))
+		cmd.Env = append(cmd.Env, k+"="+keys.User().Expand(v))
 	}
 	in, err := cmd.StdinPipe()
 	if err != nil {

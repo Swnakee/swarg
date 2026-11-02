@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -105,7 +106,7 @@ func (s *sources) limitFor(name string) func(model string) int {
 		s.tried[name] = true
 		s.mu.Unlock()
 		if cat == nil && !tried && s.cfg.Providers[name].Type == "openrouter" {
-			cat, _ = s.fetch(name)
+			cat, _ = s.fetch(context.Background(), name)
 		}
 		for _, m := range cat {
 			if m.ID == model && m.Context > 0 {
@@ -136,7 +137,7 @@ func (s *sources) Switch(name string) (string, error) {
 		return "", errors.New("the agent is not running")
 	}
 	if p.Type == "openrouter" {
-		s.fetch(name) // best effort: without it the limits fall back to the config
+		s.fetch(context.Background(), name) // best effort: without it the limits fall back to the config
 	}
 	prev := s.Current()
 	s.setActive(name) // before SetSource: its EvModel records the model under the new Source
@@ -152,9 +153,9 @@ func (s *sources) Switch(name string) (string, error) {
 		"are sent to a third party (%s); shown once per project", name, hostOf(p.BaseURL)), nil
 }
 
-// fetch loads and keeps the Catalog of name; it returns the error of the request.
-func (s *sources) fetch(name string) ([]openai.ModelInfo, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+// fetch loads and keeps the Catalog of name (bounded by probeTimeout inside ctx); it returns the error of the request.
+func (s *sources) fetch(ctx context.Context, name string) ([]openai.ModelInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	cat, err := s.client(name).Catalog(ctx)
 	if err != nil {
@@ -168,11 +169,7 @@ func (s *sources) fetch(name string) ([]openai.ModelInfo, error) {
 
 // Servers lists every configured provider with its state, probed in parallel (R-100).
 func (s *sources) Servers(ctx context.Context) ([]ui.ServerRow, error) {
-	names := make([]string, 0, len(s.cfg.Providers))
-	for n := range s.cfg.Providers {
-		names = append(names, n)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(s.cfg.Providers))
 	rows := make([]ui.ServerRow, len(names))
 	var wg sync.WaitGroup
 	for i, n := range names {
@@ -189,16 +186,10 @@ func (s *sources) Servers(ctx context.Context) ([]ui.ServerRow, error) {
 		wg.Add(1)
 		go func(i int, n string) {
 			defer wg.Done()
-			pctx, cancel := context.WithTimeout(ctx, probeTimeout)
-			defer cancel()
-			cat, err := s.client(n).Catalog(pctx)
-			if err != nil {
+			if _, err := s.fetch(ctx, n); err != nil {
 				rows[i].State = "down: " + netCause(err)
 				return
 			}
-			s.mu.Lock()
-			s.catalog[n] = cat
-			s.mu.Unlock()
 			rows[i].State = "ok"
 		}(i, n)
 	}
@@ -210,15 +201,10 @@ func (s *sources) Servers(ctx context.Context) ([]ui.ServerRow, error) {
 // server reports supported_parameters, the Recent ones marked, the price per row (R-101, R-102).
 func (s *sources) List(ctx context.Context) ([]ui.ModelRow, error) {
 	name := s.Current()
-	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-	cat, err := s.client(name).Catalog(pctx)
+	cat, err := s.fetch(ctx, name)
 	if err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	s.catalog[name] = cat
-	s.mu.Unlock()
 	recent := s.recent.Models(name)
 	var rows []ui.ModelRow
 	for _, m := range cat {

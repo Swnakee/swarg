@@ -16,7 +16,7 @@ Feature: Approval
       When the user submits "write"
       Then the file "n.txt" does not exist
 
-    @S-063
+    @S-063 @R-6
     Scenario: A denial note reaches the Provider
       Given approval is denied with the note "use another name"
       And a Provider that calls "write_file" for "n.txt" with "hi" and then answers "ok"

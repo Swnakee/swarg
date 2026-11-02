@@ -115,6 +115,8 @@ def trace_stats(tdir):
             s["trace"] = True
             if k == "request":
                 s["steps"] += 1
+                if d.get("model"):
+                    s.setdefault("models", set()).add(d["model"])
             elif k == "tool_start":
                 s["calls"] += 1
             elif k == "tool_end" and d.get("error"):
@@ -146,6 +148,13 @@ def collect(task, out, jsonl):
     row = dict(task=task, category=re.sub(r"-\d.*$", "", task), status=status, reason=reason,
                turns=len(turns_txt), wall_s=t1 - t0, bad_exit=sum(1 for t in turns_txt if not t.endswith("exit=0")))
     row.update(trace_stats(os.path.join(ev, "traces")))
+    # Guard: every request must go to the model under test (a run once silently used the default model).
+    want = os.environ.get("SWARG_MODEL", "")
+    used = sorted(row.pop("models", set()))
+    wrong = [m for m in used if want and m != want]
+    if wrong:
+        row["status"], row["reason"] = "ERROR", "wrong model: %s (want %s)" % (", ".join(wrong), want)
+        status, reason = row["status"], row["reason"]
     with open(jsonl, "a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
     print("%s %s" % (status, reason))

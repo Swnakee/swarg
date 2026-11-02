@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"swarg/internal/config"
+	"swarg/internal/keys"
 )
 
 // ---------------------------------------------------------------------------
@@ -71,7 +72,7 @@ func dialHTTP(s config.MCPServer) (Transport, error) {
 	}
 	headers := make(map[string]string, len(s.Headers))
 	for k, v := range s.Headers {
-		headers[k] = config.UserKeys().Expand(v)
+		headers[k] = keys.User().Expand(v)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t := &httpTransport{url: s.URL, headers: headers, limit: max(s.Timeout(), startLimit) + closeGrace,

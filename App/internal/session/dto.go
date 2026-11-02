@@ -43,12 +43,19 @@ type record struct {
 	Think   *bool          `json:"think,omitempty"`  // the thinking mode was switched (/think); the last one wins
 	Name    string         `json:"name,omitempty"`   // the Session was given a Name (/rename); the last one wins
 	Spend   *spendRecord   `json:"spend,omitempty"`  // the cost of one response (R-111); replay sums them
+	Usage   *usageRecord   `json:"usage,omitempty"`  // the tokens of one response (R-131); replay sums them
 	Prompt  string         `json:"prompt,omitempty"` // the prompt profile was chosen (/prompt, R-118); the last one wins
 }
 
 type spendRecord struct {
 	Model string  `json:"model"`
 	USD   float64 `json:"usd"`
+}
+
+type usageRecord struct {
+	In     int `json:"in,omitempty"`
+	Cached int `json:"cached,omitempty"`
+	Out    int `json:"out,omitempty"`
 }
 
 type msgRecord struct {

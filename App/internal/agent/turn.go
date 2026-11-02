@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"swarg/internal/agent/guard"
 	"swarg/internal/chat"
 )
 
@@ -31,6 +32,10 @@ const (
 	droppedWarning     = "the model's answer arrived empty though it wrote tokens (probably an unclosed tool call the server dropped); asking it again"
 	droppedStop        = "stopped: the model's answer arrived empty"
 	droppedNudge       = "Your last answer arrived empty: nothing reached me (probably a tool call that was not closed). Send it again, complete."
+
+	reasoningOnlyWarning = "the model only thought and stopped (no answer, no tool call); asking it to go on"
+	reasoningOnlyStop    = "stopped: the model only thought and gave no answer"
+	reasoningOnlyNudge   = "You only thought and stopped: no answer and no tool call reached me. Go on: call the tool you planned, or give your answer."
 )
 
 // maxDenials is the number of denied calls in one Turn that ends the Turn.
@@ -58,12 +63,11 @@ type turnResult struct {
 	raw       []chat.ToolCall // calls of EventDone, before normalization
 	calls     []pendingCall   // valid only for a step that completed normally
 	note      string          // extra warning emitted after TurnEnded
-	guard     loopGuard       // watches the streamed text for repetition
+	guard     guard.Loop      // watches the streamed text for repetition
 	looped    bool            // the guard cancelled the request
 	clock     stepClock       // times of the stream, for the Generation speed
 	status    string          // how the loop ended (statusDone, ...); set by runLoop
 	steps     int             // Steps the loop took
-	tokens    int             // completion tokens of the Step (usage), 0 when not reported
 	sent      int             // estimated prompt tokens of the request (R-65)
 	limit     int             // max_tokens of the request, named in the undelivered nudge (R-67)
 	model     string          // the model id of the request, for its cost (R-111)
@@ -88,7 +92,7 @@ func (a *Agent) runTurn(ctx context.Context, it qitem) {
 	a.mu.Unlock()
 	a.emit(meter)
 
-	var repeats repeatGuard
+	var repeats guard.Repeat
 	var r *turnResult
 	var msg chat.Message
 	if it.task {
@@ -97,10 +101,7 @@ func (a *Agent) runTurn(ctx context.Context, it qitem) {
 		a.runSkill(c, it.skill, &repeats)
 	}
 	if (it.task || it.skill != "") && a.isInterrupted() { // the Esc ended the prelude: no Session request (R-11)
-		r = &turnResult{finish: chat.FinishInterrupted, status: statusInterrupted}
-		if a.wasAborted() {
-			r.status = statusAborted
-		}
+		r = &turnResult{finish: chat.FinishInterrupted, status: a.interruptedStatus()}
 	} else {
 		r, msg = a.runLoop(c, &repeats)
 	}
@@ -116,7 +117,7 @@ func (a *Agent) runTurn(ctx context.Context, it qitem) {
 // runLoop is the Step loop on one conversation: the Session's or a Task's. The repeat guard and
 // the denial count are per loop; the Step limit is the Turn's for the Session and the Task's
 // otherwise. Queued user texts join the Session only (A3): a Task's context stays clean.
-func (a *Agent) runLoop(c *conversation, repeats *repeatGuard) (*turnResult, chat.Message) {
+func (a *Agent) runLoop(c *conversation, repeats *guard.Repeat) (*turnResult, chat.Message) {
 	var r *turnResult
 	var msg chat.Message
 	denials, nudged := 0, false
@@ -154,10 +155,7 @@ func (a *Agent) runLoop(c *conversation, repeats *repeatGuard) (*turnResult, cha
 		}
 		d, stuck := a.runCalls(c, r.calls, repeats)
 		if a.isInterrupted() || c.ctx.Err() != nil {
-			r.finish, r.status = chat.FinishInterrupted, statusInterrupted
-			if a.wasAborted() {
-				r.status = statusAborted
-			}
+			r.finish, r.status = chat.FinishInterrupted, a.interruptedStatus()
 			break
 		}
 		if denials += d; d > 0 && denials >= maxDenials {
@@ -165,7 +163,7 @@ func (a *Agent) runLoop(c *conversation, repeats *repeatGuard) (*turnResult, cha
 			break
 		}
 		if stuck {
-			r.finish, r.note = chat.FinishStop, repeats.warning()
+			r.finish, r.note = chat.FinishStop, repeats.Warning()
 			r.status = r.note
 			break
 		}
@@ -184,7 +182,8 @@ func (a *Agent) runLoop(c *conversation, repeats *repeatGuard) (*turnResult, cha
 // (the server could not parse it, F10), or finish "length" with no text, no reasoning and no
 // call (the server held a too long or endless tool call back until max_tokens, F11), or finish
 // "stop" with tokens written but nothing delivered (the server dropped a tool call the model did
-// not close, T5 M1; one token is just the end token: a real empty answer). It returns
+// not close, T5 M1; one token is just the end token: a real empty answer), or finish "stop" with
+// reasoning only (gpt-oss plans a call in its reasoning and stops, T14). It returns
 // the warning, the nudge for the model and the stop note; all "" for a normal Step.
 func lostCall(r *turnResult) (warning, nudge, stop string) {
 	switch {
@@ -192,8 +191,10 @@ func lostCall(r *turnResult) (warning, nudge, stop string) {
 		return unparsedWarning, unparsedNudge, unparsedStop
 	case r.finish == chat.FinishLength && !r.looped && r.text.Len() == 0 && r.reasoning.Len() == 0:
 		return undeliveredWarning, fmt.Sprintf(undeliveredNudge, r.limit), undeliveredStop
-	case r.finish == chat.FinishStop && r.tokens > 1 && r.text.Len() == 0 && r.reasoning.Len() == 0 && len(r.raw) == 0:
+	case r.finish == chat.FinishStop && r.clock.tokens > 1 && r.text.Len() == 0 && r.reasoning.Len() == 0 && len(r.raw) == 0:
 		return droppedWarning, droppedNudge, droppedStop
+	case r.finish == chat.FinishStop && r.text.Len() == 0 && r.reasoning.Len() > 0 && len(r.raw) == 0:
+		return reasoningOnlyWarning, reasoningOnlyNudge, reasoningOnlyStop
 	}
 	return "", "", ""
 }
@@ -317,7 +318,7 @@ func (a *Agent) handle(c *conversation, r *turnResult, ev chat.StreamEvent) bool
 			return false
 		}
 		r.text.WriteString(ev.Text)
-		if cut, ok := r.guard.feed(ev.Text); ok {
+		if cut, ok := r.guard.Feed(ev.Text); ok {
 			// Same path as Abort for the request: returning ends consume and stream's deferred
 			// reqCancel disconnects. The answer is stored cut before the repetition.
 			r.text.Reset()
@@ -341,8 +342,7 @@ func (a *Agent) handle(c *conversation, r *turnResult, ev chat.StreamEvent) bool
 		if cut != "" {
 			a.emit(c.tag(Event{Kind: EvWarning, Text: cut}))
 		}
-		r.tokens = ev.Usage.CompletionTokens
-		a.addSpend(r.model, ev.Usage.Cost)
+		a.addUsage(r.model, ev.Usage)
 		a.traceC(c, "usage", map[string]any{"prompt": ev.Usage.PromptTokens, "completion": ev.Usage.CompletionTokens, "cached": ev.Usage.CachedTokens})
 	case chat.EventDone:
 		r.finish, r.err, r.raw = ev.Finish, ev.Err, ev.ToolCalls
@@ -369,6 +369,14 @@ func (a *Agent) wasAborted() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.aborted
+}
+
+// interruptedStatus is the status of a Turn or Step the Esc ended: aborted after a second Esc.
+func (a *Agent) interruptedStatus() string {
+	if a.wasAborted() {
+		return statusAborted
+	}
+	return statusInterrupted
 }
 
 // ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -31,21 +32,30 @@ func NewFile(dir, name string) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(dir, name+".md")
+	created, err := writeNew(path, fmt.Sprintf(fileTemplate, name, name))
+	if err != nil {
+		return "", err
+	}
+	if !created {
+		return "", fmt.Errorf("%s already exists", path)
+	}
+	return path, nil
+}
+
+// writeNew creates path exclusively and writes content; created is false when the file already exists.
+func writeNew(path, content string) (created bool, err error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		if os.IsExist(err) {
-			return "", fmt.Errorf("%s already exists", path)
+			return false, nil
 		}
-		return "", err
+		return false, err
 	}
-	_, werr := fmt.Fprintf(f, fileTemplate, name, name)
+	_, werr := f.WriteString(content)
 	if cerr := f.Close(); werr == nil {
 		werr = cerr
 	}
-	if werr != nil {
-		return "", werr
-	}
-	return path, nil
+	return werr == nil, werr
 }
 
 // ---------------------------------------------------------------------------
@@ -56,15 +66,12 @@ func NewFile(dir, name string) (string, error) {
 // into dir/<name>.md so it can be edited; the file then replaces the built-in. An existing file is
 // never overwritten: its path comes back with created false. A name that is no built-in is an error.
 func ExportBuiltin(dir, name string) (path string, created bool, err error) {
-	var t *Type
-	for _, b := range builtins() {
-		if b.Name == name {
-			t = &b
-		}
-	}
-	if t == nil {
+	all := builtins()
+	i := slices.IndexFunc(all, func(b Type) bool { return b.Name == name })
+	if i < 0 {
 		return "", false, fmt.Errorf("%q is not a built-in agent type", name)
 	}
+	t := &all[i]
 	path = filepath.Join(dir, name+".md")
 	if _, err := os.Stat(path); err == nil {
 		return path, false, nil
@@ -86,19 +93,9 @@ func ExportBuiltin(dir, name string) (path string, created bool, err error) {
 		b.WriteString("max_steps: " + strconv.Itoa(t.MaxSteps) + "\n")
 	}
 	b.WriteString("---\n" + t.Body + "\n")
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	created, err = writeNew(path, b.String())
 	if err != nil {
-		if os.IsExist(err) {
-			return path, false, nil
-		}
 		return "", false, err
 	}
-	_, werr := f.WriteString(b.String())
-	if cerr := f.Close(); werr == nil {
-		werr = cerr
-	}
-	if werr != nil {
-		return "", false, werr
-	}
-	return path, true, nil
+	return path, created, nil
 }

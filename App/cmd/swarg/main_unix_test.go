@@ -106,6 +106,7 @@ func exitCode(t *testing.T, err error) int {
 // Tests
 // ---------------------------------------------------------------------------
 
+// R-15
 func TestMain_NoChildSurvives(t *testing.T) {
 	srv := llmtest.New(t, bgReply(), waitReply(), llmtest.Reply{Chunks: []string{"started"}})
 	cmd, work := startSwarg(t, srv)
@@ -117,6 +118,7 @@ func TestMain_NoChildSurvives(t *testing.T) {
 	wantGone(t, pidOf(t, work))
 }
 
+// R-15
 func TestMain_SignalKillsJobs(t *testing.T) {
 	for _, sig := range []syscall.Signal{syscall.SIGHUP, syscall.SIGTERM} {
 		t.Run(sig.String(), func(t *testing.T) { signalKillsJobs(t, sig) })

@@ -5,10 +5,11 @@ package skills
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -83,17 +84,13 @@ func Load(globalDir, projectDir string, disabled []string) (*Set, []string) {
 			byName[s.Name] = s
 		}
 	}
-	set := &Set{}
-	for _, s := range byName {
-		set.skills = append(set.skills, s)
-	}
-	sort.Slice(set.skills, func(i, j int) bool { return set.skills[i].Name < set.skills[j].Name })
+	set := &Set{skills: slices.SortedFunc(maps.Values(byName), func(a, b *Skill) int { return strings.Compare(a.Name, b.Name) })}
 	for _, name := range disabled {
 		if err := set.SetEnabled(name, false); err != nil {
 			warnings = append(warnings, "skills: "+err.Error())
 		}
 	}
-	if n := set.enabled(); n > manySkills {
+	if n := len(set.names(true)); n > manySkills {
 		warnings = append(warnings, fmt.Sprintf("skills: %d skills listed, the small models pick worse from long lists", n))
 	}
 	return set, warnings
@@ -167,7 +164,7 @@ func (s *Set) SetEnabled(name string, on bool) error {
 	defer s.mu.Unlock()
 	k := s.find(name)
 	if k == nil {
-		return fmt.Errorf("unknown skill %q; known skills: %s", name, s.names(false))
+		return fmt.Errorf("unknown skill %q; known skills: %s", name, list(s.names(false)))
 	}
 	k.Enabled = on
 	return nil
@@ -193,34 +190,27 @@ func (s *Set) Block() string {
 func (s *Set) Tool() tools.Tool { return Tool{set: s} }
 
 func (s *Set) find(name string) *Skill {
-	for _, k := range s.skills {
-		if k.Name == name {
-			return k
-		}
+	if i := slices.IndexFunc(s.skills, func(k *Skill) bool { return k.Name == name }); i >= 0 {
+		return s.skills[i]
 	}
 	return nil
 }
 
-// names lists the Skill names, the enabled ones only when enabledOnly; "none" when empty.
-func (s *Set) names(enabledOnly bool) string {
+// names lists the Skill names, the enabled ones only when enabledOnly.
+func (s *Set) names(enabledOnly bool) []string {
 	var out []string
 	for _, k := range s.skills {
 		if k.Enabled || !enabledOnly {
 			out = append(out, k.Name)
 		}
 	}
-	if len(out) == 0 {
-		return "none"
-	}
-	return strings.Join(out, ", ")
+	return out
 }
 
-func (s *Set) enabled() int {
-	n := 0
-	for _, k := range s.skills {
-		if k.Enabled {
-			n++
-		}
+// list joins names for an error text; "none" when empty.
+func list(names []string) string {
+	if len(names) == 0 {
+		return "none"
 	}
-	return n
+	return strings.Join(names, ", ")
 }

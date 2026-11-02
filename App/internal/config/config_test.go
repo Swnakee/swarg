@@ -33,7 +33,7 @@ func TestDefaults_MatchSpec(t *testing.T) {
 		t.Fatalf("provider = %q, want local", c.Provider)
 	}
 	if p.Type != "openai" || p.BaseURL != "http://127.0.0.1:8080/v1" ||
-		p.Model != "mlx-community/Qwen3.5-4B-4bit" || p.ContextLimit != 16384 || p.MaxTokens != 2048 {
+		p.Model != "mlx-community/Qwen3.5-4B-4bit" || p.ContextLimit != 16384 || p.MaxTokens != 8192 {
 		t.Fatalf("unexpected provider defaults: %+v", p)
 	}
 	ctargs, ok := p.ExtraBody["chat_template_kwargs"].(map[string]any)
@@ -211,7 +211,7 @@ func TestValidate(t *testing.T) {
 		{"empty model", func(c *Config) { p := c.Providers["local"]; p.Model = ""; c.Providers["local"] = p }, true},
 		{"context_limit zero", func(c *Config) { setInt(c, func(p *Provider) *int { return &p.ContextLimit }, 0) }, true},
 		{"context_limit negative", func(c *Config) { setInt(c, func(p *Provider) *int { return &p.ContextLimit }, -1) }, true},
-		{"max_tokens zero", func(c *Config) { setInt(c, func(p *Provider) *int { return &p.MaxTokens }, 0) }, true},
+		{"max_tokens negative", func(c *Config) { setInt(c, func(p *Provider) *int { return &p.MaxTokens }, -1) }, true},
 		{"warn_share zero", func(c *Config) { c.Prompt.WarnShare = 0 }, true},
 		{"warn_share one", func(c *Config) { c.Prompt.WarnShare = 1 }, true},
 		{"warn_share 0.01", func(c *Config) { c.Prompt.WarnShare = 0.01 }, false},
@@ -590,8 +590,8 @@ func TestThinking_DefaultOffAndPreset(t *testing.T) {
 	if p.Thinking {
 		t.Error("thinking must be off by default")
 	}
-	if p.ThinkingLimit() != 8192 {
-		t.Errorf("limit %d, want 8192", p.ThinkingLimit())
+	if p.ThinkingLimit() != 16384 {
+		t.Errorf("limit %d, want 16384", p.ThinkingLimit())
 	}
 	b := p.ThinkingBody()
 	args, _ := b["chat_template_kwargs"].(map[string]any)
@@ -655,8 +655,8 @@ func TestDefaults_OllamaPreset(t *testing.T) {
 	if p.Type != "ollama" || p.BaseURL != "http://127.0.0.1:11434/v1" || p.Model == "" || p.ContextLimit <= 0 {
 		t.Fatalf("preset %+v", p)
 	}
-	if p.MaxTokens != 4096 { // a 250-line file is ~2800 tokens: 2048 cut it on every model (T7 code-07)
-		t.Errorf("max_tokens = %d, want 4096", p.MaxTokens)
+	if p.MaxTokens != 8192 { // a 250-line file is ~2800 tokens: 2048 cut it on every model (T7 code-07)
+		t.Errorf("max_tokens = %d, want 8192", p.MaxTokens)
 	}
 	if p.ExtraBody["reasoning_effort"] != "none" {
 		t.Errorf("extra_body = %v, want reasoning_effort none", p.ExtraBody)

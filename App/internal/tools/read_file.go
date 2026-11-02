@@ -23,7 +23,7 @@ const (
 )
 
 // ReadFile returns numbered lines of a text file inside the project.
-type ReadFile struct{}
+type ReadFile struct{ readOnlyTool }
 
 // Spec describes read_file for the model.
 func (ReadFile) Spec() chat.ToolSpec {
@@ -38,12 +38,6 @@ func (ReadFile) Spec() chat.ToolSpec {
 	}
 }
 
-// ReadOnly is true: read_file never changes files.
-func (ReadFile) ReadOnly() bool { return true }
-
-// Confirm is false: read_file runs without approval.
-func (ReadFile) Confirm() bool { return false }
-
 // Block is the system prompt text for read_file.
 func (ReadFile) Block() string {
 	return "read_file: read a text file before you change or explain it. Lines come back as \"N: text\". Leading / = project root.\n" +
@@ -51,34 +45,20 @@ func (ReadFile) Block() string {
 }
 
 // Summary is the path, or "" when the args are not valid JSON.
-func (ReadFile) Summary(args json.RawMessage) string {
-	var a struct {
-		Path string `json:"path"`
-	}
-	if json.Unmarshal(args, &a) != nil {
-		return ""
-	}
-	return a.Path
-}
+func (ReadFile) Summary(args json.RawMessage) string { return pathOf(args) }
 
 // Run returns the requested line range. It fails on directories, binary files and
 // offsets past the end; a range that stops short of the end gets a continuation note.
 func (t ReadFile) Run(_ context.Context, env Env, args json.RawMessage) (Result, error) {
-	var a struct {
+	a := struct {
 		Path   string `json:"path"`
-		Offset *int   `json:"offset"`
-		Limit  *int   `json:"limit"`
-	}
+		Offset int    `json:"offset"`
+		Limit  int    `json:"limit"`
+	}{Offset: 1, Limit: defaultReadLimit}
 	if err := DecodeFor(t, args, &a, "path"); err != nil {
 		return Result{}, err
 	}
-	offset, limit := 1, defaultReadLimit
-	if a.Offset != nil {
-		offset = *a.Offset
-	}
-	if a.Limit != nil {
-		limit = *a.Limit
-	}
+	offset, limit := a.Offset, a.Limit
 	if offset <= 0 || limit <= 0 {
 		return Result{}, errors.New("offset and limit must be >= 1")
 	}

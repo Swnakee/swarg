@@ -12,9 +12,9 @@ import (
 // ---------------------------------------------------------------------------
 
 var profileCeilings = map[prompt.Profile]int{
-	prompt.Compact:  1200, // the same ceiling as TestBlocks_TokenCeiling
-	prompt.Standard: 5000,
-	prompt.Full:     12000,
+	prompt.Low:    1230, // the same ceiling as TestBlocks_TokenCeiling
+	prompt.Medium: 3700,
+	prompt.High:   6500,
 }
 
 func TestProfiles_TokenBudget(t *testing.T) {

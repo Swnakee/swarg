@@ -109,7 +109,7 @@ for t in "${TASKS[@]}"; do
     turns="$(python3 "$HERE/eval.py" prep "$TD" "$FX")" || { say "prep failed: $t"; continue; }
 
     # sandbox/run.sh takes a fixture NAME under sandbox/fixtures: link ours there for the run
-    LINK="$SANDBOX/fixtures/_eval-$t"
+    LINK="$SANDBOX/fixtures/_eval${SWARG_LANE:+-$SWARG_LANE}-$t"
     ln -sfn "$FX" "$LINK"
 
     say "task $t ($turns turn(s))"
@@ -118,7 +118,7 @@ for t in "${TASKS[@]}"; do
     while :; do
         case "$t" in web-*|combo-*) export SWARG_WEB_DIR="$HERE/web" ;; *) unset SWARG_WEB_DIR ;; esac
         case "$t" in mcp-http-*) export SWARG_MCP_DIR="$HERE/mcp" ;; *) unset SWARG_MCP_DIR ;; esac
-        bash "$SANDBOX/run.sh" "_eval-$t" -- sh /work/.eval/driver.sh > "$LOG" 2>&1
+        bash "$SANDBOX/run.sh" "_eval${SWARG_LANE:+-$SWARG_LANE}-$t" -- sh /work/.eval/driver.sh > "$LOG" 2>&1
         rc=$?
         [ "$rc" = 5 ] || break
         if [ "$waited" -ge "$LOCK_WAIT" ]; then say "another e2e run still holds the lock after ${LOCK_WAIT}s"; break; fi

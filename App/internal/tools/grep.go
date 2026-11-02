@@ -23,7 +23,7 @@ const (
 )
 
 // Grep searches text files under a path for a Go regular expression.
-type Grep struct{}
+type Grep struct{ readOnlyTool }
 
 // Spec describes grep for the model.
 func (Grep) Spec() chat.ToolSpec {
@@ -37,12 +37,6 @@ func (Grep) Spec() chat.ToolSpec {
 			`"required":["pattern"]}`),
 	}
 }
-
-// ReadOnly is true: grep never changes files.
-func (Grep) ReadOnly() bool { return true }
-
-// Confirm is false: grep runs without approval.
-func (Grep) Confirm() bool { return false }
 
 // Block is the system prompt text for grep.
 func (Grep) Block() string {

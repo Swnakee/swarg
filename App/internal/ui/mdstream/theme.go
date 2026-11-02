@@ -90,7 +90,6 @@ func chromaTokens() *ansi.Chroma {
 	comment := fg(c.Dim)
 	name := fg(c.Link)
 	return &ansi.Chroma{
-		Text:                ansi.StylePrimitive{},
 		Error:               ansi.StylePrimitive{Color: str(c.Error), Bold: boolp(true)},
 		Comment:             comment,
 		CommentPreproc:      strLit,

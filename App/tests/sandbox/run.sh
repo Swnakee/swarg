@@ -43,19 +43,24 @@ RUN_TIMEOUT="${SWARG_RUN_TIMEOUT:-1800}"    # seconds; generous on purpose
 CPUS="${SWARG_CPUS:-1}"
 MEMORY="${SWARG_MEMORY:-1g}"
 
-NET="swarg-e2e-net"
-PROXY="swarg-e2e-proxy"
-WEB="swarg-e2e-web"
+# SWARG_LANE=name: a second independent lane (own containers, image and lock), e.g. a cloud
+# run next to a local one. Never two lanes against the same single-lane model server.
+LANE="${SWARG_LANE:-}"
+case "$LANE" in *[!a-z0-9]*) echo "SWARG_LANE: only a-z and 0-9" >&2; exit 2 ;; esac
+SFX="${LANE:+-$LANE}"
+NET="swarg-e2e${SFX}-net"
+PROXY="swarg-e2e${SFX}-proxy"
+WEB="swarg-e2e${SFX}-web"
 WEB_DIR="${SWARG_WEB_DIR:-}"   # fake web for web-* evals: a dir with server.py and site/<host>/
-EGRESS_PROXY="swarg-e2e-egress"
+EGRESS_PROXY="swarg-e2e${SFX}-egress"
 EGRESS="${SWARG_EGRESS:-}"      # comma-separated hosts the run container may reach over HTTPS
 KEY_ENV="${SWARG_KEY_ENV:-}"    # name of a host env var holding an API key to pass in
 NO_LOCAL="${SWARG_NO_LOCAL:-0}"
-MCP="swarg-e2e-mcp"
+MCP="swarg-e2e${SFX}-mcp"
 MCP_DIR="${SWARG_MCP_DIR:-}"   # fake HTTP MCP server for mcp-http-* evals: a dir with mcp_http.py and mcp_demo.py
 MCP_TOKEN="t9-eval-token"      # the bearer the fake needs; the agent gets it as MCP_TOKEN (never in a config file)
-IMAGE="swarg-e2e:latest"
-LOCK="${TMPDIR:-/tmp}/swarg-e2e.lock"
+IMAGE="swarg-e2e${SFX}:latest"
+LOCK="${TMPDIR:-/tmp}/swarg-e2e${SFX}.lock"
 
 TTY=()
 if [ "${1:-}" = "-i" ]; then TTY=(-it); shift; fi
@@ -232,7 +237,8 @@ OUT="$ROOT/Export/e2e/$(date +%Y%m%d-%H%M%S)-$FIXTURE"
 mkdir -p "$OUT"
 
 BASE_ENV=()
-[ "$NO_LOCAL" != 1 ] && BASE_ENV=(-e SWARG_BASE_URL=http://model:8080/v1 -e SWARG_MODEL="$MODEL_ID")
+BASE_ENV=(-e SWARG_MODEL="$MODEL_ID")  # always: a cloud run (SWARG_NO_LOCAL) needs the model too
+[ "$NO_LOCAL" != 1 ] && BASE_ENV+=(-e SWARG_BASE_URL=http://model:8080/v1)
 
 CID=$(docker create ${TTY[@]+"${TTY[@]}"} --network "$NET" \
     --cpus "$CPUS" --memory "$MEMORY" --pids-limit 256 \

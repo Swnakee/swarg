@@ -12,7 +12,7 @@ import (
 )
 
 // EditFile replaces one exact fragment of a file inside the project folder.
-type EditFile struct{}
+type EditFile struct{ askTool }
 
 // ---------------------------------------------------------------------------
 // Tool
@@ -30,12 +30,6 @@ func (EditFile) Spec() chat.ToolSpec {
 			`"required":["path","old","new"],"additionalProperties":false}`),
 	}
 }
-
-// ReadOnly is false: edit_file changes files.
-func (EditFile) ReadOnly() bool { return false }
-
-// Confirm is true: the user approves each edit.
-func (EditFile) Confirm() bool { return true }
 
 // Block tells the model when to use edit_file.
 func (EditFile) Block() string {

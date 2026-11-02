@@ -1,0 +1,160 @@
+diff -ruN a/ratelimit.py ref/ratelimit.py
+--- a/ratelimit.py	2026-11-01 03:42:18
++++ ref/ratelimit.py	2026-11-01 03:42:07
+@@ -1,7 +1,96 @@
+ """Token-bucket rate limiting."""
+ import time
+ 
++INF = float("inf")
+ 
++
+ class TokenBucket:
+     def __init__(self, capacity, rate, clock=time.monotonic):
+-        raise NotImplementedError
++        self.capacity = capacity
++        self.rate = rate
++        self.clock = clock
++        self._tokens = capacity
++        self._last = clock()
++
++    def _refill(self):
++        now = self.clock()
++        if now > self._last:
++            self._tokens = min(self.capacity, self._tokens + (now - self._last) * self.rate)
++        self._last = now
++
++    @property
++    def tokens(self):
++        self._refill()
++        return self._tokens
++
++    def allow(self, cost=1):
++        self._refill()
++        if cost > self.capacity or cost > self._tokens:
++            return False
++        self._tokens -= cost
++        return True
++
++
++class Limiter:
++    def __init__(self, capacity, rate, clock=time.monotonic):
++        self.capacity = capacity
++        self.rate = rate
++        self.clock = clock
++        self._b = {}  # key -> [tokens, last]
++
++    def _bucket(self, key, now):
++        b = self._b.get(key)
++        if b is None:
++            return [self.capacity, now]
++        if now > b[1]:
++            b[0] = min(self.capacity, b[0] + (now - b[1]) * self.rate)
++        b[1] = now
++        return b
++
++    def _sweep(self, now):
++        for key in list(self._b):
++            b = self._bucket(key, now)
++            if b[0] >= self.capacity:
++                del self._b[key]
++
++    def allow(self, key, cost=1):
++        now = self.clock()
++        self._sweep(now)
++        b = self._bucket(key, now)
++        if cost > self.capacity or cost > b[0]:
++            return False
++        b[0] -= cost
++        if b[0] < self.capacity:
++            self._b[key] = b
++        return True
++
++    def retry_after(self, key, cost=1):
++        now = self.clock()
++        self._sweep(now)
++        if cost > self.capacity:
++            return INF
++        b = self._bucket(key, now)
++        need = cost - b[0]
++        if need <= 0:
++            return 0
++        if self.rate <= 0:
++            return INF
++        return need / self.rate
++
++    def __len__(self):
++        self._sweep(self.clock())
++        return len(self._b)
++
++    def dump(self):
++        now = self.clock()
++        self._sweep(now)
++        return {"capacity": self.capacity, "rate": self.rate,
++                "keys": {k: {"tokens": b[0], "age": 0.0} for k, b in self._b.items()}}
++
++    @classmethod
++    def load(cls, state, clock=time.monotonic):
++        lim = cls(state["capacity"], state["rate"], clock)
++        now = clock()
++        for k, v in state["keys"].items():
++            lim._b[k] = [v["tokens"], now - v["age"]]
++        return lim
+diff -ruN a/tests/test_ratelimit.py ref/tests/test_ratelimit.py
+--- a/tests/test_ratelimit.py	2026-11-01 03:42:18
++++ ref/tests/test_ratelimit.py	2026-11-01 03:42:18
+@@ -3,12 +3,51 @@
+ import unittest
+ 
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+-import ratelimit  # noqa: E402
++from ratelimit import Limiter, TokenBucket  # noqa: E402
+ 
+ 
+-class Smoke(unittest.TestCase):
+-    def test_module_has_bucket(self):
+-        self.assertTrue(hasattr(ratelimit, "TokenBucket"))
++class Clock:
++    def __init__(self, t=0.0):
++        self.t = t
++
++    def __call__(self):
++        return self.t
++
++
++class Tests(unittest.TestCase):
++    def test_bucket_drains_and_refills(self):
++        c = Clock()
++        b = TokenBucket(2, 1, c)
++        self.assertTrue(b.allow())
++        self.assertTrue(b.allow())
++        self.assertFalse(b.allow())
++        c.t = 1
++        self.assertTrue(b.allow())
++
++    def test_cost_over_capacity(self):
++        b = TokenBucket(2, 1, Clock())
++        self.assertFalse(b.allow(3))
++        self.assertEqual(b.tokens, 2)
++
++    def test_limiter_per_key(self):
++        L = Limiter(1, 1, Clock())
++        self.assertTrue(L.allow("a"))
++        self.assertTrue(L.allow("b"))
++        self.assertFalse(L.allow("a"))
++
++    def test_clock_backwards(self):
++        c = Clock(10)
++        b = TokenBucket(3, 1, c)
++        b.allow(3)
++        c.t = 5
++        self.assertEqual(b.tokens, 0)
++
++    def test_dump_load(self):
++        c = Clock()
++        L = Limiter(2, 1, c)
++        L.allow("a", 2)
++        M = Limiter.load(L.dump(), Clock(50))
++        self.assertFalse(M.allow("a"))
+ 
+ 
+ if __name__ == "__main__":

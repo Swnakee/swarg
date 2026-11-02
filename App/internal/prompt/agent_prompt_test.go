@@ -37,7 +37,7 @@ func allowOnly(names ...string) func(string) bool {
 
 func TestBuildAgent_CompactIsBaseToolsBodyEnv(t *testing.T) {
 	s, cwd := loadWithTools(t)
-	got := s.BuildAgent(Compact, "agent-model", "BODY", allowOnly("read_file"))
+	got := s.BuildAgent(Low, "agent-model", "BODY", allowOnly("read_file"))
 	want := testBase + "\n\nREAD-LINE\n\nBODY\n\n" + strings.Replace(envBlock(cwd), "Model: qwen", "Model: agent-model", 1)
 	if got != want {
 		t.Errorf("BuildAgent =\n%s\nwant\n%s", got, want)
@@ -46,7 +46,7 @@ func TestBuildAgent_CompactIsBaseToolsBodyEnv(t *testing.T) {
 
 func TestBuildAgent_OnlyAllowedToolBlocks(t *testing.T) {
 	s, _ := loadWithTools(t)
-	got := s.BuildAgent(Compact, "m", "", allowOnly("read_file", "shell"))
+	got := s.BuildAgent(Low, "m", "", allowOnly("read_file", "shell"))
 	for _, no := range []string{"TASK-LINE", "SKILL-LIST"} {
 		if strings.Contains(got, no) {
 			t.Errorf("agent prompt carries %q", no)
@@ -55,7 +55,7 @@ func TestBuildAgent_OnlyAllowedToolBlocks(t *testing.T) {
 	if !strings.Contains(got, "READ-LINE") || !strings.Contains(got, "SHELL-LINE") {
 		t.Errorf("allowed tool blocks missing:\n%s", got)
 	}
-	if strings.Contains(s.BuildAgent(Compact, "m", "", nil), "READ-LINE") {
+	if strings.Contains(s.BuildAgent(Low, "m", "", nil), "READ-LINE") {
 		t.Error("a nil allow func must offer no tool block")
 	}
 }
@@ -65,32 +65,32 @@ func TestBuildAgent_ProfileLayersWithoutSubagents(t *testing.T) {
 	if err := s.SetText("subagents", "DELEGATE-RULES"); err != nil {
 		t.Fatal(err)
 	}
-	std := s.BuildAgent(Standard, "m", "BODY", nil)
-	if !strings.Contains(std, strings.TrimSpace(standardText)) || strings.Contains(std, strings.TrimSpace(fullText)) {
-		t.Error("standard agent must carry the standard layer only")
+	std := s.BuildAgent(Medium, "m", "BODY", nil)
+	if !strings.Contains(std, strings.TrimSpace(mediumText)) || strings.Contains(std, strings.TrimSpace(highText)) {
+		t.Error("medium agent must carry the medium layer only")
 	}
-	if strings.Contains(s.BuildAgent(Full, "m", "BODY", nil), "DELEGATE-RULES") {
+	if strings.Contains(s.BuildAgent(High, "m", "BODY", nil), "DELEGATE-RULES") {
 		t.Error("an agent prompt must never carry the sub-agent policy")
 	}
-	if !strings.Contains(s.BuildAgent(Full, "m", "", nil), strings.TrimSpace(fullText)) {
-		t.Error("full agent must carry the full layer")
+	if !strings.Contains(s.BuildAgent(High, "m", "", nil), strings.TrimSpace(highText)) {
+		t.Error("high agent must carry the high layer")
 	}
 }
 
 func TestBuildAgent_DoesNotChangeTheSession(t *testing.T) {
 	s, _ := loadWithTools(t)
-	_ = s.SetProfile(Compact)
+	_ = s.SetProfile(Low)
 	before := s.Build()
-	_ = s.BuildAgent(Full, "other", "BODY", allowOnly("shell"))
-	if s.Build() != before || s.Profile() != Compact {
+	_ = s.BuildAgent(High, "other", "BODY", allowOnly("shell"))
+	if s.Build() != before || s.Profile() != Low {
 		t.Error("BuildAgent changed the Session's prompt or profile")
 	}
 }
 
 func TestBuildAgent_UnknownProfileIsCompact(t *testing.T) {
 	s, _ := loadWithTools(t)
-	if s.BuildAgent("nope", "m", "B", nil) != s.BuildAgent(Compact, "m", "B", nil) {
-		t.Error("an unknown profile must build as compact")
+	if s.BuildAgent("nope", "m", "B", nil) != s.BuildAgent(Low, "m", "B", nil) {
+		t.Error("an unknown profile must build as low")
 	}
 }
 
@@ -100,7 +100,7 @@ func TestBuildAgent_DisabledBlockStaysOut(t *testing.T) {
 	writeFile(t, global+"/10-extra.md", "EXTRA")
 	s, _ := mustLoad(t, global, cwd)
 	_ = s.SetEnabled("extra", false)
-	if strings.Contains(s.BuildAgent(Compact, "m", "B", nil), "EXTRA") {
+	if strings.Contains(s.BuildAgent(Low, "m", "B", nil), "EXTRA") {
 		t.Error("a switched-off Block reached the agent prompt")
 	}
 }

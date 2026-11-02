@@ -155,7 +155,7 @@ func (w *world) begin() error {
 	}
 	extra = append(extra, w.plugSkills()...)
 	extra = append(extra, w.plugMCP()...)
-	set, _, err := prompt.Load(w.globalDir(), w.cwd(), prompt.Env{OS: "test", Shell: "sh", Dir: w.cwd(), Date: "2026-01-01", Model: "m"}, extra...)
+	set, _, err := prompt.Load(w.globalDir(), w.cwd(), prompt.Env{OS: "test", Shell: "sh", Dir: w.cwd(), Date: "2026-01-01", Model: "m", Git: prompt.InGitRepo(w.cwd())}, extra...)
 	if err != nil {
 		return err
 	}

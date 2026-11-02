@@ -8,50 +8,27 @@ import "swarg/internal/chat"
 
 // Store adapts a Writer to the consumer interface `agent.Store`: the same calls, but the
 // seq results are dropped (the agent numbers its own history and the Writer keeps a Seq that
-// is above everything written). It adds no state and no locking of its own.
-type Store struct{ w *Writer }
+// is above everything written). It adds no state and no locking of its own; every other
+// agent.Store method is promoted from the embedded Writer.
+type Store struct{ *Writer }
 
 // NewStore wraps w.
-func NewStore(w *Writer) *Store { return &Store{w: w} }
+func NewStore(w *Writer) *Store { return &Store{w} }
 
 // Message appends m (see Writer.Message).
 func (s *Store) Message(m chat.Message) error {
-	_, err := s.w.Message(m)
+	_, err := s.Writer.Message(m)
 	return err
 }
 
-// Patch records one stub / argument-shrink batch.
-func (s *Store) Patch(ps []chat.Patch) error { return s.w.Patch(ps) }
-
-// Clear records that the history was emptied.
-func (s *Store) Clear() error { return s.w.Clear() }
-
 // Compact records that fromSeq..toSeq were replaced by summary.
 func (s *Store) Compact(fromSeq, toSeq int, summary chat.Message) error {
-	_, err := s.w.Compact(fromSeq, toSeq, summary)
+	_, err := s.Writer.Compact(fromSeq, toSeq, summary)
 	return err
 }
 
 // Repair appends the synthetic cancelled results made when a session was resumed.
 func (s *Store) Repair(ms []chat.Message) error {
-	_, err := s.w.Repair(ms)
+	_, err := s.Writer.Repair(ms)
 	return err
 }
-
-// Flush forces the file to stable storage.
-func (s *Store) Flush() error { return s.w.Flush() }
-
-// Thinking records a thinking mode switch.
-func (s *Store) Thinking(on bool) error { return s.w.Thinking(on) }
-
-// Profile records a prompt profile choice.
-func (s *Store) Profile(name string) error { return s.w.Profile(name) }
-
-// Model records a Model choice.
-func (s *Store) Model(name string) error { return s.w.Model(name) }
-
-// Provider records a Source switch.
-func (s *Store) Provider(name string) error { return s.w.Provider(name) }
-
-// Spend records the cost of one response (R-111).
-func (s *Store) Spend(model string, usd float64) error { return s.w.Spend(model, usd) }

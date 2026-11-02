@@ -31,7 +31,7 @@ const (
 // ---------------------------------------------------------------------------
 
 // Shell runs a shell command in the project folder.
-type Shell struct{}
+type Shell struct{ askTool }
 
 // shellCommand builds the command to run; tests replace it to run a helper
 // process. It must use exec.CommandContext(ctx, ...).
@@ -47,12 +47,6 @@ func (Shell) Spec() chat.ToolSpec {
 			`"description":"only for servers/watchers that never end"}},"required":["command"]}`),
 	}
 }
-
-// ReadOnly is false: a command may change anything.
-func (Shell) ReadOnly() bool { return false }
-
-// Confirm is true: the user approves every command.
-func (Shell) Confirm() bool { return true }
 
 // Block is the system prompt text for the tool.
 func (Shell) Block() string {

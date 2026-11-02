@@ -64,4 +64,5 @@ func initializeScenario(sc *godog.ScenarioContext) {
 	registerMCPSteps(sc, w)
 	registerKeysSteps(sc, w)
 	registerSpendSteps(sc, w)
+	registerUsageSteps(sc, w)
 }

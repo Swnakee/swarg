@@ -11,15 +11,16 @@ import (
 	"github.com/cucumber/godog"
 
 	"swarg/internal/config"
+	"swarg/internal/keys"
 )
 
 // ---------------------------------------------------------------------------
-// Steps for keys.feature: the real config.KeyStore over a temp dir (never the user's config dir).
+// Steps for keys.feature: the real keys.Store over a temp dir (never the user's config dir).
 // ---------------------------------------------------------------------------
 
 type keysWorld struct {
 	dir      string
-	store    config.KeyStore
+	store    keys.Store
 	cfg      config.Config
 	value    string
 	src      string
@@ -33,7 +34,7 @@ func (w *world) keysWorld() *keysWorld {
 	if w.kw == nil {
 		dir := w.tb.TempDir()
 		w.kw = &keysWorld{dir: dir, cfg: config.Defaults(),
-			store: config.KeyStore{File: filepath.Join(dir, "keys.env"), OldDir: filepath.Join(dir, "keys")}}
+			store: keys.Store{File: filepath.Join(dir, "keys.env"), OldDir: filepath.Join(dir, "keys")}}
 	}
 	return w.kw
 }
@@ -170,7 +171,7 @@ func registerKeysSteps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^the initialisation is refused and the Keys file is unchanged$`, func() error {
 		k := w.keysWorld()
 		b, _ := os.ReadFile(k.store.File)
-		if !errors.Is(k.initErr, config.ErrKeysFileExists) || string(b) != k.before {
+		if !errors.Is(k.initErr, keys.ErrKeysFileExists) || string(b) != k.before {
 			return fmt.Errorf("err %v, file changed %v", k.initErr, string(b) != k.before)
 		}
 		return nil

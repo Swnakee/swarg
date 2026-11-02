@@ -14,6 +14,8 @@ import (
 
 	"swarg/internal/agent"
 	"swarg/internal/chat"
+	"swarg/internal/ui/command"
+	"swarg/internal/ui/hover"
 )
 
 // ---------------------------------------------------------------------------
@@ -492,13 +494,13 @@ func TestTaskBlock_SlashTaskOff(t *testing.T) {
 }
 
 func TestSlashTask_Usage(t *testing.T) {
-	if _, err := ParseCommand("/task"); err == nil || err.Error() != "usage: /task <goal>" {
+	if _, err := command.Parse("/task"); err == nil || err.Error() != "usage: /task <goal>" {
 		t.Errorf("err = %v", err)
 	}
-	if c, err := ParseCommand("/task a  b"); err != nil || c.Kind != KindTask || c.Text != "a b" {
+	if c, err := command.Parse("/task a  b"); err != nil || c.Kind != command.KindTask || c.Text != "a b" {
 		t.Errorf("got %+v %v", c, err)
 	}
-	if !strings.Contains(helpText(), "/task <goal>") {
+	if !strings.Contains(command.Help(), "/task <goal>") {
 		t.Error("/help lacks /task")
 	}
 }
@@ -619,7 +621,7 @@ func TestReadable_TaskBlockInEveryProfile(t *testing.T) {
 			y := r.rowIndex("shell(go test)")
 			r.hoverTo(gw+2, y)
 			raw := r.m.View().Content
-			if !strings.Contains(strings.Split(raw, "\n")[y], underlineOn) {
+			if !strings.Contains(strings.Split(raw, "\n")[y], hover.UnderlineOn) {
 				t.Errorf("child head not underlined on hover")
 			}
 			if bad := unreadable(downsample(raw, p), p); len(bad) > 0 {

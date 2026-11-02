@@ -25,6 +25,7 @@ type Store interface {
 	Provider(name string) error                             // a Source switch (SetSource, R-101)
 	Thinking(on bool) error                                 // a thinking mode switch (SetThinking)
 	Spend(model string, usd float64) error                  // the cost of one response (R-111)
+	Usage(prompt, cached, completion int) error             // the tokens of one response (R-131)
 	Flush() error                                           // end of every Turn
 }
 

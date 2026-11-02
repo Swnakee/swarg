@@ -3,12 +3,13 @@ package ui
 import (
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
 	"swarg/internal/agent"
 	"swarg/internal/chat"
+	"swarg/internal/ui/menu"
 )
 
 // ---------------------------------------------------------------------------
@@ -44,7 +45,7 @@ func (m *model) sessionRows() ([]SessionRow, error) {
 		return nil, err
 	}
 	rows = append([]SessionRow(nil), rows...)
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Time.After(rows[j].Time) })
+	slices.SortStableFunc(rows, func(a, b SessionRow) int { return b.Time.Compare(a.Time) })
 	return rows, nil
 }
 
@@ -62,25 +63,22 @@ func (m *model) openPicker() {
 	case len(rows) == 0:
 		m.say("no saved sessions")
 	default:
-		p := newPicker(rows, m.d.Sessions.Current(), m.d.Sessions.Delete)
-		p.hv, p.title = &m.hv, "Saved sessions"
-		p.onChoose = m.openSession
-		m.pick = p
+		m.openMenu(newPicker(rows, m.d.Sessions.Current(), m.d.Sessions.Delete, func(o *menu.Options) {
+			o.Title, o.OnChoose = "Saved sessions", m.openSession
+		}), nil)
 	}
 }
 
 // pickAct applies what the open menu decided after a key or mouse message: a close (back to the
 // parent menu, if any), or the chosen row handed to the menu's onChoose (a true closes the menu;
 // the Session picker stays open when opening fails, with the reason in its footer).
-func (m *model) pickAct(a pickAction) {
+func (m *model) pickAct(a menu.Action) {
 	switch a {
-	case pickClose:
-		m.pick = m.pick.parent
-	case pickChosen:
-		id := m.pick.chosen
-		m.pick.chosen = ""
-		if m.pick.onChoose == nil || m.pick.onChoose(id) {
-			m.pick = m.pick.parent
+	case menu.ActClose:
+		m.pick = m.pick.Parent()
+	case menu.ActChosen:
+		if m.pick.Choose(m.pick.TakeChosen()) {
+			m.pick = m.pick.Parent()
 		}
 	}
 }
@@ -104,7 +102,7 @@ func (m *model) openSession(id string) bool {
 		m.note("resume: " + err.Error())
 		return false
 	}
-	if err := ld.Load(o.History, agent.WithMaxSeq(o.MaxSeq), agent.WithModel(o.Model), agent.WithThinking(o.Think), agent.WithSpend(o.Spend)); err != nil {
+	if err := ld.Load(o.History, agent.WithMaxSeq(o.MaxSeq), agent.WithModel(o.Model), agent.WithThinking(o.Think), agent.WithSpend(o.Spend), agent.WithTokens(o.Tokens)); err != nil {
 		m.note("resume: " + err.Error())
 		return false
 	}
@@ -130,7 +128,7 @@ func (m *model) rename(name string) {
 // else a notice in the list.
 func (m *model) note(text string) {
 	if m.pick != nil {
-		m.pick.note = text
+		m.pick.SetNote(text)
 		return
 	}
 	m.say(text)
@@ -170,10 +168,7 @@ func (m *model) showContext() {
 // user items, assistant items (a Summary as a dim "work summary" notice), tool items from the
 // assistant ToolCalls and their results. A call without a result shows as cancelled.
 func (m *model) rebuild(history []chat.Message) {
-	m.cv.reset()
-	m.calls, m.runN, m.tasks, m.outBuf, m.cur, m.nextN, m.step = nil, nil, nil, map[int][]byte{}, -1, 0, 0
-	m.sc = scrollState{follow: true}
-	m.clearSel()
+	m.resetList()
 	results := map[string]chat.Message{}
 	for _, msg := range history {
 		if msg.Role == chat.RoleTool {
@@ -220,8 +215,5 @@ func (m *model) rebuildCall(tc chat.ToolCall, results map[string]chat.Message) {
 		r.brief = cancelledOnEnd
 	}
 	r.item = m.cv.addTool(r)
-	m.calls = append(m.calls, r)
-	if len(m.calls) > maxCalls {
-		m.calls = append(m.calls[:0], m.calls[len(m.calls)-maxCalls:]...)
-	}
+	m.appendCall(r)
 }

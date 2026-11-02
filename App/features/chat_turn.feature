@@ -15,7 +15,7 @@ Feature: A Turn streams an answer into the Session
       When the user submits "Hi"
       Then the Session history is only the user Message "Hi"
 
-    @S-003
+    @S-003 @R-3
     Scenario: A Provider that drops the connection ends the Turn with an error
       Given a Provider that drops the connection after the text "Hel"
       When the user submits "Hi"
@@ -37,14 +37,14 @@ Feature: A Turn streams an answer into the Session
 
   Rule: A server error does not end the Session
 
-    @S-006
+    @S-006 @R-3
     Scenario: The next question is answered after a server error
       Given a Provider that fails with a server error and then streams the answer "Recovered"
       And the user submitted "First" and the Turn ended with an error
       When the user submits "Second"
       Then the last assistant Message is "Recovered"
 
-    @S-007
+    @S-007 @R-3
     Scenario: A server error keeps the user Message and stores no assistant Message
       Given a Provider that fails with a server error
       When the user submits "Hi"

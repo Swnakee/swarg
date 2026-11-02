@@ -1,0 +1,2 @@
+Make two slow log-analysis functions fast on a few hundred thousand events without changing results.
+Our nightly job runs logstats.dedupe() and logstats.rolling_unique() on about 300000 events and never finishes (bench.py shows how it is called, run it with a small N first). Please make both functions fast enough for 300000 events (a few seconds at most) and keep their results exactly the same as now. Standard library only. The existing tests in tests/ must still pass.

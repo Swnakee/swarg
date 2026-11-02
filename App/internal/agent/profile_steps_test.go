@@ -16,8 +16,8 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	standardMarker = "Scope discipline"
-	fullMarker     = "Autonomy and persistence"
+	mediumMarker = "Scope discipline"
+	highMarker   = "Autonomy and persistence"
 )
 
 // profileWorld is the state of the Profile scenarios.
@@ -57,17 +57,23 @@ func registerProfileSteps(sc *godog.ScenarioContext, w *world) {
 		}
 		return nil
 	})
-	sc.Step(`^the SystemPrompt sent to the Provider has no Profile layer$`, func() error {
-		if err := w.wantSystem(false, standardMarker); err != nil {
-			return err
+	sc.Step(`^the prompt Profile in force is "([^"]*)"$`, func(want string) error {
+		if got := w.set.Profile(); string(got) != want {
+			return fmt.Errorf("Profile %q, want %q", got, want)
 		}
-		return w.wantSystem(false, fullMarker)
+		return nil
 	})
-	sc.Step(`^the SystemPrompt sent to the Provider carries the standard and the full layers$`, func() error {
-		if err := w.wantSystem(true, standardMarker); err != nil {
+	sc.Step(`^the SystemPrompt sent to the Provider has no Profile layer$`, func() error {
+		if err := w.wantSystem(false, mediumMarker); err != nil {
 			return err
 		}
-		return w.wantSystem(true, fullMarker)
+		return w.wantSystem(false, highMarker)
+	})
+	sc.Step(`^the SystemPrompt sent to the Provider carries the medium and the high layers$`, func() error {
+		if err := w.wantSystem(true, mediumMarker); err != nil {
+			return err
+		}
+		return w.wantSystem(true, highMarker)
 	})
 
 	// config.feature's world: the effective Profile of a Source and a model

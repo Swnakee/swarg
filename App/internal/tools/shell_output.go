@@ -11,8 +11,9 @@ import (
 	"swarg/internal/chat"
 )
 
-// ShellOutput reads the new output of a background job.
-type ShellOutput struct{}
+// ShellOutput reads the new output of a background job; reading changes nothing the user cares
+// about, so it is read-only.
+type ShellOutput struct{ readOnlyTool }
 
 // jobIDArgs are the arguments of shell_output and shell_kill.
 type jobIDArgs struct {
@@ -32,12 +33,6 @@ func (ShellOutput) Spec() chat.ToolSpec {
 	return chat.ToolSpec{Name: "shell_output", Description: "Read new output of a background job",
 		Schema: json.RawMessage(outputSchema)}
 }
-
-// ReadOnly is true: reading a job changes nothing the user cares about.
-func (ShellOutput) ReadOnly() bool { return true }
-
-// Confirm is false.
-func (ShellOutput) Confirm() bool { return false }
 
 // Block is the system prompt text for the tool.
 func (ShellOutput) Block() string {

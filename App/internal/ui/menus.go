@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"swarg/internal/ui/menu"
 
 	"charm.land/lipgloss/v2"
 )
@@ -19,21 +20,41 @@ const (
 	markOff = "○"
 )
 
+// menuOpts starts the options of a menu with the host's text cleaner and colour fitting.
+func menuOpts(title string, rows []menu.Row) menu.Options {
+	return menu.Options{Title: title, Rows: rows, Keys: map[string]func(string){}, Clean: Clean, Fit: fitProfile}
+}
+
 // openMenu shows a menu in the list area, registering its spots in the host's hover.
-func (m *model) openMenu(mn *menu, parent *menu) {
-	mn.hv, mn.parent = &m.hv, parent
-	if m.d.Scopes != nil && mn.scopes == nil && mn.onScope != nil {
-		mn.scopes, mn.scope = m.d.Scopes.Scopes(), m.d.Scopes.Default()
+func (m *model) openMenu(mn *menu.Menu, parent *menu.Menu) {
+	mn.Attach(&m.hv)
+	mn.SetParent(parent)
+	if m.d.Scopes != nil && mn.ScopeAware() {
+		mn.SetScopes(m.d.Scopes.Scopes(), m.d.Scopes.Default())
 	}
 	m.pick = mn
 }
 
-// scopeOf is the save scope of a command: the given one, else the default (nil Scopes = "").
-func (m *model) scopeOf(given string) string {
-	if given != "" || m.d.Scopes == nil {
+// scopeOr is the save scope of a command: the given one, else def, else the scopes' default
+// (nil Scopes = "").
+func (m *model) scopeOr(given, def string) string {
+	switch {
+	case given != "" || m.d.Scopes == nil:
 		return given
+	case def != "":
+		return def
 	}
 	return m.d.Scopes.Default()
+}
+
+// sayToggle says the outcome of a /skills, /mcp or /agents switch: the saved note, or the error.
+func (m *model) sayToggle(scope, what string, err error) {
+	note, err := saved(scope, what, err)
+	if err != nil {
+		m.say(err.Error())
+		return
+	}
+	m.say(note + " (from the next request)")
 }
 
 // saved is the footer note after a switch: persisted to the scope, this run only (no scope), or
@@ -76,52 +97,71 @@ func columns(rows [][]string) []string {
 	return out
 }
 
+// columnRows lays cells out with columns() and builds the menu rows; row gives the row i without its Text.
+func columnRows(cells [][]string, row func(i int) menu.Row) []menu.Row {
+	items := make([]menu.Row, len(cells))
+	for i, t := range columns(cells) {
+		items[i] = row(i)
+		items[i].Text = t
+	}
+	return items
+}
+
+// pickMark is on when yes, else off (the in-use and enabled marks of the rows).
+func pickMark(yes bool, on, off string) string {
+	if yes {
+		return on
+	}
+	return off
+}
+
+// toggleNote shows the outcome of a switch in the footer of mn after a rebuild: the saved note, or the error.
+func toggleNote(mn *menu.Menu, rebuild func(), what string, err error) {
+	note, err := saved(mn.Scope(), what, err)
+	rebuild()
+	if err != nil {
+		note = err.Error()
+	}
+	mn.SetNote(note)
+}
+
 // ---------------------------------------------------------------------------
 // /skills
 // ---------------------------------------------------------------------------
 
 // skillsMenu lists the Skills: Enter applies one (like /skill name), Space or the label switches
 // it (saved to the scope), Tab cycles the scope.
-func (m *model) skillsMenu() *menu {
-	mn := newMenu("Skills", nil)
-	mn.hint = "↑/↓ move   Enter apply   Space on/off   Esc close   type to filter"
-	mn.empty = "no skills   Esc close"
+func (m *model) skillsMenu() *menu.Menu {
+	var mn *menu.Menu
+	o := menuOpts("Skills", nil)
+	o.Hint = "↑/↓ move   Enter apply   Space on/off   Esc close   type to filter"
+	o.Empty = "no skills   Esc close"
 	rebuild := func() {
 		var cells [][]string
 		var rows []SkillRow
 		for _, s := range m.d.Skills.List() {
-			mark := markOn
-			if !s.Enabled {
-				mark = markOff
-			}
 			rows = append(rows, s)
-			cells = append(cells, []string{"  " + mark + " " + Clean(s.Name), s.Source, Clean(s.Description)})
+			cells = append(cells, []string{"  " + pickMark(s.Enabled, markOn, markOff) + " " + Clean(s.Name), s.Source, Clean(s.Description)})
 		}
-		items := make([]menuRow, len(rows))
-		for i, t := range columns(cells) {
-			items[i] = menuRow{ID: rows[i].Name, Text: t, Match: rows[i].Name + " " + rows[i].Description, Right: onOff(!rows[i].Enabled)}
-		}
-		mn.setItems(items)
+		mn.SetRows(columnRows(cells, func(i int) menu.Row {
+			return menu.Row{ID: rows[i].Name, Match: rows[i].Name + " " + rows[i].Description, Right: onOff(!rows[i].Enabled)}
+		}))
 	}
 	toggle := func(id string) {
 		for _, s := range m.d.Skills.List() {
 			if s.Name == id {
-				note, err := saved(mn.scope, "skill "+id+": "+onOff(!s.Enabled), m.d.Skills.SetEnabled(id, !s.Enabled, mn.scope))
-				rebuild()
-				if err != nil {
-					note = err.Error()
-				}
-				mn.note = note
+				toggleNote(mn, rebuild, "skill "+id+": "+onOff(!s.Enabled), m.d.Skills.SetEnabled(id, !s.Enabled, mn.Scope()))
 				return
 			}
 		}
 	}
-	mn.keys["space"], mn.onRight = toggle, toggle
-	mn.onScope = func(string) {}
-	mn.onChoose = func(id string) bool {
+	o.Keys["space"], o.OnRight = toggle, toggle
+	o.OnScope = func(string) {}
+	o.OnChoose = func(id string) bool {
 		m.submitSkill(id, "")
 		return true
 	}
+	mn = menu.New(o)
 	rebuild()
 	return mn
 }
@@ -132,10 +172,11 @@ func (m *model) skillsMenu() *menu {
 
 // mcpMenu lists the servers: Enter opens one (its tools), Space / the label switches it (saved to
 // the scope), r restarts, a approves a project server.
-func (m *model) mcpMenu() *menu {
-	mn := newMenu("MCP servers", nil)
-	mn.hint = "↑/↓ move   Enter tools   Space on/off   r restart   a approve   Esc close"
-	mn.empty = "no MCP servers configured   Esc close"
+func (m *model) mcpMenu() *menu.Menu {
+	var mn *menu.Menu
+	o := menuOpts("MCP servers", nil)
+	o.Hint = "↑/↓ move   Enter tools   Space on/off   r restart   a approve   Esc close"
+	o.Empty = "no MCP servers configured   Esc close"
 	find := func(id string) (MCPServerRow, bool) {
 		for _, s := range m.d.MCP.Servers() {
 			if s.Name == id {
@@ -155,15 +196,13 @@ func (m *model) mcpMenu() *menu {
 			rows = append(rows, s)
 			cells = append(cells, []string{"  " + Clean(s.Name), state, fmt.Sprintf("%d tools", s.Tools), s.Transport, s.Source, Clean(s.Reason)})
 		}
-		items := make([]menuRow, len(rows))
-		for i, t := range columns(cells) {
+		mn.SetRows(columnRows(cells, func(i int) menu.Row {
 			right := onOff(!rows[i].Enabled)
 			if rows[i].State == "needs approval" {
 				right = "approve"
 			}
-			items[i] = menuRow{ID: rows[i].Name, Text: t, Match: rows[i].Name, Right: right}
-		}
-		mn.setItems(items)
+			return menu.Row{ID: rows[i].Name, Match: rows[i].Name, Right: right}
+		}))
 	}
 	act := func(id string, f func(MCPServerRow) (string, error)) {
 		s, ok := find(id)
@@ -175,42 +214,43 @@ func (m *model) mcpMenu() *menu {
 		if err != nil {
 			note = "mcp " + id + ": " + err.Error()
 		}
-		mn.note = note
+		mn.SetNote(note)
 	}
 	toggle := func(id string) {
 		act(id, func(s MCPServerRow) (string, error) {
-			return saved(mn.scope, "mcp "+id+": "+onOff(!s.Enabled), m.d.MCP.SetEnabled(id, !s.Enabled, mn.scope))
+			return saved(mn.Scope(), "mcp "+id+": "+onOff(!s.Enabled), m.d.MCP.SetEnabled(id, !s.Enabled, mn.Scope()))
 		})
 	}
 	approve := func(id string) {
 		act(id, func(MCPServerRow) (string, error) { return "mcp " + id + ": approved and started", m.d.MCP.Approve(id) })
 	}
-	mn.keys["space"] = toggle
-	mn.keys["r"] = func(id string) {
+	o.Keys["space"] = toggle
+	o.Keys["r"] = func(id string) {
 		act(id, func(MCPServerRow) (string, error) { return "mcp " + id + ": running", m.d.MCP.Restart(id) })
 	}
-	mn.keys["a"] = approve
-	mn.onRight = func(id string) {
+	o.Keys["a"] = approve
+	o.OnRight = func(id string) {
 		if s, ok := find(id); ok && s.State == "needs approval" {
 			approve(id)
 			return
 		}
 		toggle(id)
 	}
-	mn.onScope = func(string) {}
-	mn.onChoose = func(id string) bool {
+	o.OnScope = func(string) {}
+	o.OnChoose = func(id string) bool {
 		if sub := m.mcpServerMenu(id); sub != nil {
 			m.openMenu(sub, mn)
 		}
 		return false
 	}
+	mn = menu.New(o)
 	rebuild()
 	return mn
 }
 
 // mcpServerMenu shows the tools of one server (offered or not, read-only marked) with the stderr
 // tail as the footer note; nil with a notice when the server is unknown.
-func (m *model) mcpServerMenu(name string) *menu {
+func (m *model) mcpServerMenu(name string) *menu.Menu {
 	tools, stderr, err := m.d.MCP.Tools(name)
 	if err != nil {
 		m.note(err.Error())
@@ -227,16 +267,16 @@ func (m *model) mcpServerMenu(name string) *menu {
 		}
 		cells = append(cells, []string{"  " + Clean(t.Name), note, Clean(t.Description)})
 	}
-	items := make([]menuRow, len(tools))
-	for i, t := range columns(cells) {
-		items[i] = menuRow{ID: tools[i].Name, Text: t, Match: tools[i].Name, Dim: !tools[i].Offered}
-	}
-	mn := newMenu("MCP server "+name, items)
-	mn.hint, mn.empty = "Esc back", "no tools   Esc back"
+	items := columnRows(cells, func(i int) menu.Row {
+		return menu.Row{ID: tools[i].Name, Match: tools[i].Name, Dim: !tools[i].Offered}
+	})
+	o := menuOpts("MCP server "+name, items)
+	o.Hint, o.Empty = "Esc back", "no tools   Esc back"
+	o.OnChoose = func(string) bool { return false }
+	mn := menu.New(o)
 	if stderr = strings.TrimSpace(stderr); stderr != "" {
-		mn.note = "stderr: " + lastLineOf(Clean(stderr))
+		mn.SetNote("stderr: " + lastLineOf(Clean(stderr)))
 	}
-	mn.onChoose = func(string) bool { return false }
 	return mn
 }
 
@@ -253,7 +293,7 @@ func lastLineOf(s string) string {
 // price on the right (R-102); the filter searches id and name; Enter sets the model. The optional
 // save stores the choice through /config's API when called from there. The order shown is the
 // order /model N counts (modelRows).
-func (m *model) modelMenu(rows []ModelRow, save func(id string)) *menu {
+func (m *model) modelMenu(rows []ModelRow, save func(id string)) *menu.Menu {
 	rows = slices.Clone(rows)
 	slices.SortStableFunc(rows, func(a, b ModelRow) int {
 		if a.Recent != b.Recent {
@@ -267,43 +307,34 @@ func (m *model) modelMenu(rows []ModelRow, save func(id string)) *menu {
 	m.modelRows = rows
 	cells := make([][]string, len(rows))
 	for i, r := range rows {
-		mark := " "
-		if r.ID == m.modelName {
-			mark = glyphAuto
-		}
-		cells[i] = []string{"  " + mark + " " + Clean(r.ID), Clean(r.Name)}
+		cells[i] = []string{"  " + pickMark(r.ID == m.modelName, glyphAuto, " ") + " " + Clean(r.ID), Clean(r.Name)}
 	}
-	items := make([]menuRow, len(rows))
-	for i, t := range columns(cells) {
-		items[i] = menuRow{ID: rows[i].ID, Text: t, Match: rows[i].ID + " " + rows[i].Name, Right: rows[i].Price}
-	}
-	mn := newMenu("Models ("+glyphAuto+" = in use)", items)
-	mn.onChoose = func(id string) bool {
+	items := columnRows(cells, func(i int) menu.Row {
+		return menu.Row{ID: rows[i].ID, Match: rows[i].ID + " " + rows[i].Name, Right: rows[i].Price}
+	})
+	o := menuOpts("Models ("+glyphAuto+" = in use)", items)
+	o.OnChoose = func(id string) bool {
 		m.setModel(id)
 		if save != nil {
 			save(id)
 		}
 		return true
 	}
-	return mn
+	return menu.New(o)
 }
 
 // thinkMenu is /think without an argument: two rows, Enter sets the mode.
-func (m *model) thinkMenu() *menu {
-	var items []menuRow
+func (m *model) thinkMenu() *menu.Menu {
+	var items []menu.Row
 	for _, s := range []string{"on", "off"} {
-		mark := " "
-		if onOff(m.thinking) == s {
-			mark = glyphAuto
-		}
-		items = append(items, menuRow{ID: s, Text: "  " + mark + " thinking " + s})
+		items = append(items, menu.Row{ID: s, Text: "  " + pickMark(onOff(m.thinking) == s, glyphAuto, " ") + " thinking " + s})
 	}
-	mn := newMenu("Thinking mode", items)
-	mn.onChoose = func(id string) bool {
+	o := menuOpts("Thinking mode", items)
+	o.OnChoose = func(id string) bool {
 		m.think(id)
 		return true
 	}
-	return mn
+	return menu.New(o)
 }
 
 // ---------------------------------------------------------------------------
@@ -312,9 +343,10 @@ func (m *model) thinkMenu() *menu {
 
 // configMenu lists the main settings: Enter or Space toggles a bool (or opens the model menu),
 // Left/Right step a number; every change is saved to the scope and applied live where the app can.
-func (m *model) configMenu() *menu {
-	mn := newMenu("Settings", nil)
-	mn.hint = "↑/↓ move   Enter toggle/choose   ←/→ step   Esc close"
+func (m *model) configMenu() *menu.Menu {
+	var mn *menu.Menu
+	o := menuOpts("Settings", nil)
+	o.Hint = "↑/↓ move   Enter toggle/choose   ←/→ step   Esc close"
 	settings := func(id string) (Setting, bool) {
 		for _, s := range m.d.Config.Settings() {
 			if s.Key == id {
@@ -334,15 +366,13 @@ func (m *model) configMenu() *menu {
 			keys = append(keys, keysRowID)
 			cells = append(cells, []string{"  API keys", "open (/keys)", "global"})
 		}
-		items := make([]menuRow, len(keys))
-		for i, t := range columns(cells) {
-			items[i] = menuRow{ID: keys[i], Text: t, Match: keys[i] + " " + cells[i][0]}
-		}
-		mn.setItems(items)
+		mn.SetRows(columnRows(cells, func(i int) menu.Row {
+			return menu.Row{ID: keys[i], Match: keys[i] + " " + cells[i][0]}
+		}))
 	}
 	set := func(s Setting, v any) {
-		if err := m.d.Config.Set(mn.scope, s.Key, v); err != nil {
-			mn.note = err.Error()
+		if err := m.d.Config.Set(mn.Scope(), s.Key, v); err != nil {
+			mn.SetNote(err.Error())
 			return
 		}
 		when := " (at the next start)"
@@ -361,15 +391,15 @@ func (m *model) configMenu() *menu {
 		case "profile": // the row of the prompt profile (R-117)
 			if m.d.Prompt != nil {
 				if err := m.d.Prompt.Choose(fmt.Sprint(v), ""); err != nil {
-					mn.note = err.Error()
+					mn.SetNote(err.Error())
 					return
 				}
 				when = ""
 			}
 		}
 		rebuild()
-		note, _ := saved(mn.scope, s.Label+" = "+fmt.Sprint(v), nil)
-		mn.note = note + when
+		note, _ := saved(mn.Scope(), s.Label+" = "+fmt.Sprint(v), nil)
+		mn.SetNote(note + when)
 	}
 	step := func(dir int) func(string) {
 		return func(id string) {
@@ -403,15 +433,16 @@ func (m *model) configMenu() *menu {
 		case s.Live == "model":
 			m.openMenu(m.modelMenu(m.modelRows, func(v string) { set(s, v) }), mn)
 			if len(m.modelRows) == 0 {
-				m.pick.note = "no model list fetched yet; /model fetches it"
+				m.pick.SetNote("no model list fetched yet; /model fetches it")
 			}
 		}
 		return false
 	}
-	mn.keys["left"], mn.keys["right"] = step(-1), step(1)
-	mn.keys["space"] = func(id string) { choose(id) }
-	mn.onChoose = choose
-	mn.onScope = func(string) {}
+	o.Keys["left"], o.Keys["right"] = step(-1), step(1)
+	o.Keys["space"] = func(id string) { choose(id) }
+	o.OnChoose = choose
+	o.OnScope = func(string) {}
+	mn = menu.New(o)
 	rebuild()
 	return mn
 }

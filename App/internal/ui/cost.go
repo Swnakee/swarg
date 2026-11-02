@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -47,13 +49,33 @@ type costMsg struct {
 	err error
 }
 
+// tokener is the part of the agent /cost reads for the token usage (R-133).
+type tokener interface {
+	Tokens() agent.Tokens
+}
+
+// tokensText is the usage line of /cost; "" while nothing was used.
+func tokensText(t agent.Tokens) string {
+	if t.Total() <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("tokens: %s (in %s, cached %s, out %s)", agent.FormatTokens(t.Total()),
+		agent.FormatTokens(t.Prompt), agent.FormatTokens(t.Cached), agent.FormatTokens(t.Completion))
+}
+
 // costCmd is /cost: the Session spend at once, then the key's usage when the Source can tell.
 func (m *model) costCmd() tea.Cmd {
 	var sp agent.Spend
 	if s, ok := m.d.Agent.(spender); ok {
 		sp = s.Spend()
 	}
-	m.say(spendText(sp))
+	text := spendText(sp)
+	if tk, ok := m.d.Agent.(tokener); ok {
+		if line := tokensText(tk.Tokens()); line != "" {
+			text += "\n" + line
+		}
+	}
+	m.say(text)
 	if m.d.Cost == nil {
 		return nil
 	}
@@ -80,18 +102,9 @@ func spendText(sp agent.Spend) string {
 	if sp.Total <= 0 {
 		return "Session spend: " + agent.FormatUSD(0) + " (no paid response yet)"
 	}
-	models := make([]string, 0, len(sp.ByModel))
-	for k := range sp.ByModel {
-		models = append(models, k)
-	}
+	models := slices.Collect(maps.Keys(sp.ByModel))
 	slices.SortFunc(models, func(a, b string) int {
-		if sp.ByModel[a] != sp.ByModel[b] {
-			if sp.ByModel[a] > sp.ByModel[b] {
-				return -1
-			}
-			return 1
-		}
-		return strings.Compare(a, b)
+		return cmp.Or(cmp.Compare(sp.ByModel[b], sp.ByModel[a]), strings.Compare(a, b))
 	})
 	var b strings.Builder
 	fmt.Fprintf(&b, "Session spend: %s\n", agent.FormatUSD(sp.Total))

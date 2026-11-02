@@ -16,7 +16,7 @@ import (
 )
 
 // WriteFile creates or overwrites a file inside the project folder.
-type WriteFile struct{}
+type WriteFile struct{ askTool }
 
 // ---------------------------------------------------------------------------
 // Tool
@@ -34,12 +34,6 @@ func (WriteFile) Spec() chat.ToolSpec {
 			`"required":["path","content"],"additionalProperties":false}`),
 	}
 }
-
-// ReadOnly is false: write_file changes files.
-func (WriteFile) ReadOnly() bool { return false }
-
-// Confirm is true: the user approves each write.
-func (WriteFile) Confirm() bool { return true }
 
 // Block tells the model when to use write_file.
 func (WriteFile) Block() string {

@@ -22,7 +22,7 @@ const (
 // handleKey handles the keys the model owns. handled=false means "give it to the textarea".
 func (m *model) handleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool) {
 	if m.pick != nil && !(m.quitting && msg.String() == "ctrl+c") { // the open picker takes every key (Esc and Ctrl+C close it); a second Ctrl+C of a pending quit still quits
-		m.pickAct(m.pick.key(msg))
+		m.pickAct(m.pick.Key(msg))
 		return nil, true
 	}
 	if m.ask != nil {

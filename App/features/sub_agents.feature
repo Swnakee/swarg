@@ -7,7 +7,7 @@ Feature: Sub-agents
 
   Rule: An agent works apart and returns one report (R-120, R-127)
 
-    @S-710
+    @S-710 @I-42
     Scenario: The agent's reads stay out of the Session
       Given the agent type "explore" with the tools "readonly" is on offer
       And a file "notes.txt" with the text "port 8081"
@@ -55,7 +55,7 @@ Feature: Sub-agents
       When the user sends "go"
       Then every agent request names the model "other-model"
 
-    @S-715
+    @S-715 @R-126
     Scenario: The cost of an agent's requests counts in the Session spend
       Given the agent type "general" with the tools "*" is on offer
       And the Provider starts an agent "general" with the goal "x"
@@ -66,6 +66,38 @@ Feature: Sub-agents
       And the reply costs 0.04 USD
       When the user sends "go"
       Then the Session spend is 0.07 USD
+
+  Rule: An agent asks the user through the Session's prompt; two denials stop it (R-125)
+
+    @S-738 @R-125
+    Scenario: An agent's call that needs approval asks the Session's prompt
+      Given the agent type "general" with the tools "*" is on offer
+      And approval is granted
+      And the Provider starts an agent "general" with the goal "say hi"
+      And the helper calls "shell" for "echo hi" and then reports "said hi"
+      And the Provider then answers "ok"
+      When the user sends "go"
+      Then approval was asked 1 time
+
+    @S-739 @R-125
+    Scenario: One denied call does not stop the agent
+      Given the agent type "general" with the tools "*" is on offer
+      And approval is denied
+      And the Provider starts an agent "general" with the goal "say hi"
+      And the helper calls "shell" for "echo hi" and then reports "could not say hi"
+      And the Provider then answers "ok"
+      When the user sends "go"
+      Then the agent's report starts with "done"
+
+    @S-740 @R-125
+    Scenario: Two denied calls stop the agent
+      Given the agent type "general" with the tools "*" is on offer
+      And approval is denied
+      And the Provider starts an agent "general" with the goal "say hi"
+      And the helper calls "shell" for "echo hi" twice
+      And the Provider then answers "ok"
+      When the user sends "go"
+      Then the agent's report starts with "stopped: tool calls were denied"
 
   Rule: An agent gets only the tools of its type and cannot delegate (R-121, I-41)
 

@@ -103,6 +103,7 @@ func agentResult(t *testing.T, h []chat.Message, id string) chat.Message {
 // One agent: result, own Source, allowlist, no nesting
 // ---------------------------------------------------------------------------
 
+// R-126 (the label)
 func TestAgent_OneRunReportsLikeATask(t *testing.T) {
 	ft := newFakeTools()
 	r, w := agentRig(t, ft, []AgentType{generalType})
@@ -310,11 +311,15 @@ func TestAgent_GlobalCapBeatsSourceSlots(t *testing.T) {
 	}
 }
 
+// R-127: the goal of an Agent already running is refused. Both calls of the step start at once
+// (R-122); the refused one must end while the first agent still runs, so the test waits for its
+// ToolEnd before the first agent answers (else agent 1 may finish and call 2 legally starts).
 func TestAgent_SameJobTwiceIsRefused(t *testing.T) {
 	r, w := agentRig(t, newFakeTools(), []AgentType{generalType})
 	r.a.Submit("go")
 	r.p.next(t).toolStep("", agentCall(1, "general", "Same job"), agentCall(2, "general", "same  job"))
 	ac := w.prov("srv").next(t)
+	r.rec.until(t, EvToolEnd, 1) // the refused call; the running agent cannot end before ac.reply
 	ac.reply("r")
 	next := r.p.next(t)
 	var refused int
@@ -334,6 +339,7 @@ func TestAgent_SameJobTwiceIsRefused(t *testing.T) {
 // File lock, approvals
 // ---------------------------------------------------------------------------
 
+// R-124
 func TestPathLocks_SecondHolderRefusedThenFree(t *testing.T) {
 	var l pathLocks
 	if _, ok := l.lock("a/b.go", "agent a1"); !ok {
@@ -348,6 +354,7 @@ func TestPathLocks_SecondHolderRefusedThenFree(t *testing.T) {
 	}
 }
 
+// R-124
 func TestAgent_TwoEditsOfOneFileAtOnce(t *testing.T) {
 	ft := newFakeTools()
 	ft.hold("c11")
@@ -387,6 +394,7 @@ func TestAgent_TwoEditsOfOneFileAtOnce(t *testing.T) {
 	}
 }
 
+// R-125
 func TestAgent_ApprovalsOneAtATime(t *testing.T) {
 	ft := newFakeTools()
 	var mu sync.Mutex
@@ -424,10 +432,52 @@ func TestAgent_ApprovalsOneAtATime(t *testing.T) {
 	}
 }
 
+// R-125: Esc ends the wait for the prompt. The first agent's prompt is shown; the second agent's
+// call waits for it and must end with the Esc, never showing its own prompt afterwards.
+func TestAgent_EscEndsTheApprovalWait(t *testing.T) {
+	ft := newFakeTools()
+	var mu sync.Mutex
+	asked := 0
+	shown := make(chan struct{}, 2)
+	approve := func(ctx context.Context, c chat.ToolCall) Approval {
+		mu.Lock()
+		asked++
+		mu.Unlock()
+		shown <- struct{}{}
+		<-ctx.Done() // the user answers nothing; Esc closes the prompt
+		return Approval{}
+	}
+	r, w := agentRig(t, ft, []AgentType{generalType}, func(d *Deps) { d.Approve = approve })
+	r.a.Submit("go")
+	r.p.next(t).toolStep("", agentCall(1, "general", "job1"), agentCall(2, "general", "job2"))
+	srv := w.prov("srv")
+	a, b := srv.next(t), srv.next(t)
+	a.toolStep("", toolCall(11, toolAsk, ""))
+	b.toolStep("", toolCall(21, toolAsk, ""))
+	select {
+	case <-shown:
+	case <-time.After(deadline):
+		t.Fatal("no prompt shown")
+	}
+	r.a.Interrupt()
+	wait(t, r.a)
+	mu.Lock()
+	defer mu.Unlock()
+	if asked != 1 {
+		t.Fatalf("prompts shown %d, want 1: the waiting call must end with Esc", asked)
+	}
+	for _, id := range []string{"c1", "c2"} {
+		if res := agentResult(t, r.a.History(), id); !strings.HasPrefix(res.Content, statusInterrupted) {
+			t.Errorf("%s = %q, want interrupted", id, res.Content)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Esc, spend, Store
 // ---------------------------------------------------------------------------
 
+// R-126
 func TestAgent_InterruptStopsAllAgents(t *testing.T) {
 	r, w := agentRig(t, newFakeTools(), []AgentType{generalType})
 	r.a.Submit("go")
@@ -451,6 +501,7 @@ func TestAgent_InterruptStopsAllAgents(t *testing.T) {
 	}
 }
 
+// R-126
 func TestAgent_AbortCancelsRequestsOfAllAgents(t *testing.T) {
 	r, w := agentRig(t, newFakeTools(), []AgentType{generalType})
 	r.a.Submit("go")
@@ -491,6 +542,7 @@ func TestAgent_InterruptWhileQueued(t *testing.T) {
 	}
 }
 
+// R-126
 func TestAgent_SpendOfAgentsAddsToTheSession(t *testing.T) {
 	r, w := agentRig(t, newFakeTools(), []AgentType{generalType})
 	r.a.Submit("go")
@@ -508,6 +560,7 @@ func TestAgent_SpendOfAgentsAddsToTheSession(t *testing.T) {
 	}
 }
 
+// I-42
 func TestAgent_MessagesNeverReachTheStoreOrTheHistory(t *testing.T) {
 	st := &fakeStore{}
 	r, w := agentRig(t, newFakeTools(), []AgentType{generalType}, func(d *Deps) { d.Store = st })
@@ -528,6 +581,7 @@ func TestAgent_MessagesNeverReachTheStoreOrTheHistory(t *testing.T) {
 	}
 }
 
+// R-126, I-42
 func TestAgent_EventsAreProgressLinesOnTheCallBlock(t *testing.T) {
 	r, w := agentRig(t, newFakeTools(), []AgentType{generalType})
 	r.a.Submit("go")

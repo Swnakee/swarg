@@ -16,9 +16,9 @@ import (
 
 // profileNotes are the one-line descriptions /prompt shows.
 var profileNotes = map[prompt.Profile]string{
-	prompt.Compact:  "minimal: for small local models",
-	prompt.Standard: "workflow, scope, edits, verification, git and shell safety",
-	prompt.Full:     "standard plus detailed standards, procedures and examples",
+	prompt.Low:    "minimal: for small local models",
+	prompt.Medium: "workflow, scope, edits, verification, git and shell safety",
+	prompt.High:   "medium plus detailed standards, procedures and examples",
 }
 
 // profiles decides the prompt profile and applies it to the prompt Set. Until the user chooses one
@@ -36,12 +36,12 @@ type profiles struct {
 }
 
 // resolve is the profile the config names for a Source and a model; a name the prompt package
-// does not know falls back to compact (the config check should have refused it).
+// does not know falls back to low (the config check should have refused it).
 func (p *profiles) resolve(model string) prompt.Profile {
 	name := p.cfg.ProfileFor(p.current(), model)
 	pr, err := prompt.ParseProfile(name)
 	if err != nil {
-		return prompt.Compact
+		return prompt.Low
 	}
 	return pr
 }

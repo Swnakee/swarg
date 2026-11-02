@@ -73,10 +73,8 @@ func Prune(dir string, keep int) error {
 		if err != nil || time.Since(fi.ModTime()) < pruneGrace {
 			continue
 		}
-		for _, p := range []string{paths[i], TracePath(paths[i])} {
-			if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
-				errs = append(errs, err)
-			}
+		if err := removeWithTrace(paths[i]); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)

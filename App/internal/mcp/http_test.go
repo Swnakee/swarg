@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"swarg/internal/config"
+	"swarg/internal/keys"
 	"swarg/internal/mcp"
 	"swarg/internal/mcp/mcptest"
 )
@@ -124,7 +125,7 @@ func isolateConfigDir(t *testing.T) {
 // writeKeysFile writes the user's (isolated) keys file, private.
 func writeKeysFile(t *testing.T, body string) {
 	t.Helper()
-	f := config.UserKeys().File
+	f := keys.User().File
 	if err := os.MkdirAll(filepath.Dir(f), 0o700); err != nil {
 		t.Fatal(err)
 	}

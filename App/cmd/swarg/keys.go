@@ -1,11 +1,12 @@
 package main
 
 import (
-	"fmt"
 	"io"
-	"sort"
+	"maps"
+	"slices"
 
 	"swarg/internal/config"
+	"swarg/internal/keys"
 	"swarg/internal/ui"
 )
 
@@ -23,19 +24,11 @@ var _ ui.KeysAPI = keysView{}
 
 // Keys is one row per name: the config's providers and MCP values, then any other key in the files.
 func (v keysView) Keys() []ui.KeyRow {
-	store := config.UserKeys()
+	store := keys.User()
 	users := config.KeyUsers(*v.cfg)
-	names := store.Names()
-	for n := range users {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	uniq := names[:0]
-	for i, n := range names {
-		if i == 0 || names[i-1] != n {
-			uniq = append(uniq, n)
-		}
-	}
+	names := slices.AppendSeq(store.Names(), maps.Keys(users))
+	slices.Sort(names)
+	uniq := slices.Compact(names)
 	states := store.States(uniq)
 	rows := make([]ui.KeyRow, len(uniq))
 	for i, n := range uniq {
@@ -47,12 +40,12 @@ func (v keysView) Keys() []ui.KeyRow {
 		case st.Env:
 			row.State = "set (env)"
 		case st.File:
-			row.State = "set (" + config.SrcFile + ")"
+			row.State = "set (" + keys.SrcFile + ")"
 		case st.Old:
-			row.State = "set (" + config.SrcOld + ")"
+			row.State = "set (" + keys.SrcOld + ")"
 		}
 		if st.Value != "" {
-			row.Masked = config.MaskKey(st.Value)
+			row.Masked = keys.MaskKey(st.Value)
 		}
 		rows[i] = row
 	}
@@ -60,14 +53,14 @@ func (v keysView) Keys() []ui.KeyRow {
 }
 
 // File is the keys file path shown in the menu.
-func (v keysView) File() string { return config.UserKeys().File }
+func (v keysView) File() string { return keys.User().File }
 
 // Warnings are the current problems of the keys file (never a key).
-func (v keysView) Warnings() []string { return config.UserKeys().Warnings() }
+func (v keysView) Warnings() []string { return keys.User().Warnings() }
 
 // Init writes the template with the key names the config uses; it never overwrites a file.
 func (v keysView) Init() (string, error) {
-	store := config.UserKeys()
+	store := keys.User()
 	var names []string
 	for n := range config.KeyUsers(*v.cfg) {
 		names = append(names, n)
@@ -78,11 +71,7 @@ func (v keysView) Init() (string, error) {
 // keysNotices prints the start notices about the keys: the problems of the keys file (not private,
 // bad line numbers; never a key) and, when old key files exist, the hint to move them (R-106).
 func keysNotices(w io.Writer) {
-	store := config.UserKeys()
-	for _, m := range store.Warnings() {
-		fmt.Fprintf(w, "swarg: %s\n", m)
-	}
-	if h := store.OldHint(); h != "" {
-		fmt.Fprintf(w, "swarg: %s\n", h)
-	}
+	store := keys.User()
+	warn(w, store.Warnings()...)
+	warn(w, store.OldHint())
 }

@@ -7,10 +7,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -133,6 +134,7 @@ func decodeOver(cfg *Config, data []byte) error {
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return errors.New("unexpected data after the JSON value")
 	}
+	cfg.normalizeProfiles()
 	return nil
 }
 
@@ -146,7 +148,7 @@ func guardWarnings(raw map[string]any, global Config, file string) (warnings []s
 			warn(u.key)
 		}
 	}
-	for _, n := range sortedKeys(nested(raw, "mcp", "servers")) {
+	for _, n := range slices.Sorted(maps.Keys(nested(raw, "mcp", "servers"))) {
 		if v, ok := lookup(raw, "mcp", "servers", n, "trust"); ok && v == true && !global.MCP.Servers[n].Trust {
 			warn("mcp.servers." + n + ".trust")
 		}
@@ -175,15 +177,6 @@ func guard(cfg *Config, global Config, raw map[string]any) {
 			cfg.MCP.Servers[n] = s
 		}
 	}
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // lookup walks a generic JSON object along keys.
@@ -240,7 +233,12 @@ func Set(path, key string, value any, project bool) error {
 		obj = next
 	}
 	obj[keys[len(keys)-1]] = value
-	out, err := json.MarshalIndent(root, "", "  ")
+	return writeJSON(path, root)
+}
+
+// writeJSON saves v as indented JSON with a trailing newline, creating the directory (mode 0600).
+func writeJSON(path string, v any) error {
+	out, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}

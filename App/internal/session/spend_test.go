@@ -48,3 +48,39 @@ func TestWriter_SpendIgnoresNothingToRecord(t *testing.T) {
 		t.Error("a file with no spend line must give nil")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Usage lines (R-131): the tokens of each response, summed on replay
+// ---------------------------------------------------------------------------
+
+func TestWriter_UsageLinesSum(t *testing.T) {
+	w := newWriter(t)
+	msg(t, w, user("a"))
+	for _, u := range [][3]int{{100, 60, 10}, {50, 0, 5}, {0, 0, 0}, {-1, -1, -1}} {
+		if err := w.Usage(u[0], u[1], u[2]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l := loadOK(t, w.Path())
+	if got, want := l.Tokens(), (Tokens{In: 150, Cached: 60, Out: 15}); got != want {
+		t.Errorf("tokens %+v, want %+v", got, want)
+	}
+	if n := len(readLines(t, w.Path())); n != 4 { // header, msg, two usage lines: zero and negative write nothing
+		t.Errorf("%d lines, want 4", n)
+	}
+	if !reflect.DeepEqual(texts(l.Entries), []string{"a"}) {
+		t.Errorf("a usage line changed the history: %q", texts(l.Entries))
+	}
+}
+
+// A file from before the usage lines replays with zero tokens (backward compatible).
+func TestLoad_NoUsageLinesIsZero(t *testing.T) {
+	w := newWriter(t)
+	msg(t, w, user("a"))
+	if err := w.Spend("m", 0.5); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadOK(t, w.Path()).Tokens(); got != (Tokens{}) {
+		t.Errorf("tokens %+v, want zero", got)
+	}
+}

@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"strings"
+	"swarg/internal/ui/command"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -61,15 +62,15 @@ func newAgentsRig(t *testing.T, fa *fakeAgents) *rig {
 func TestParseAgents_Table(t *testing.T) {
 	cases := []struct {
 		line    string
-		want    Command
+		want    command.Command
 		errPart string
 	}{
-		{line: "/agents", want: Command{Kind: KindAgents}},
-		{line: "/agents off a", want: Command{Kind: KindAgents, Name: "a"}},
-		{line: "/agents on a global", want: Command{Kind: KindAgents, Name: "a", On: true, Scope: "global"}},
-		{line: "/agents new a", want: Command{Kind: KindAgents, Name: "a", Text: "new"}},
-		{line: "/agents new a project", want: Command{Kind: KindAgents, Name: "a", Text: "new", Scope: "project"}},
-		{line: "/agents edit a", want: Command{Kind: KindAgents, Name: "a", Text: "edit"}},
+		{line: "/agents", want: command.Command{Kind: command.KindAgents}},
+		{line: "/agents off a", want: command.Command{Kind: command.KindAgents, Name: "a"}},
+		{line: "/agents on a global", want: command.Command{Kind: command.KindAgents, Name: "a", On: true, Scope: "global"}},
+		{line: "/agents new a", want: command.Command{Kind: command.KindAgents, Name: "a", Text: "new"}},
+		{line: "/agents new a project", want: command.Command{Kind: command.KindAgents, Name: "a", Text: "new", Scope: "project"}},
+		{line: "/agents edit a", want: command.Command{Kind: command.KindAgents, Name: "a", Text: "edit"}},
 		{line: "/agents edit", errPart: "usage: /agents"},
 		{line: "/agents on", errPart: "usage: /agents"},
 		{line: "/agents a", errPart: "usage: /agents"},
@@ -77,7 +78,7 @@ func TestParseAgents_Table(t *testing.T) {
 		{line: "/agents new", errPart: "usage: /agents"},
 	}
 	for _, c := range cases {
-		got, err := ParseCommand(c.line)
+		got, err := command.Parse(c.line)
 		if c.errPart != "" {
 			if err == nil || !strings.Contains(err.Error(), c.errPart) {
 				t.Errorf("%q: err %v, want %q", c.line, err, c.errPart)

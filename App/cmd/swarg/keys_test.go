@@ -11,6 +11,7 @@ import (
 
 	"swarg/internal/chat"
 	"swarg/internal/config"
+	"swarg/internal/keys"
 	"swarg/internal/ui"
 )
 
@@ -24,7 +25,7 @@ const keySecret = "sk-test-placeholder-value-WXYZ"
 // writeKeysFile writes the user's keys file (private) for one test; isolateConfigDir came first.
 func writeKeysFile(t *testing.T, body string) {
 	t.Helper()
-	f := config.UserKeys().File
+	f := keys.User().File
 	if err := os.MkdirAll(filepath.Dir(f), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func TestKeysView_RowsStatesAndReread(t *testing.T) {
 
 	// the user edits the file; the next call sees it (no restart)
 	writeKeysFile(t, "T12_MCP="+keySecret+"\nT12_STORED_ONLY=short\nT12_ENV_ONLY=sk-test-filevalue-9876543210\n")
-	oldDir := config.UserKeys().OldDir
+	oldDir := keys.User().OldDir
 	if err := os.MkdirAll(oldDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -117,6 +118,7 @@ func TestKeysView_InitTemplateListsConfigNamesAndNeverOverwrites(t *testing.T) {
 	}
 }
 
+// I-38
 func TestKeysNotices_WarningsAndTheOldDirHintNeverAKey(t *testing.T) {
 	isolateConfigDir(t)
 	var b strings.Builder
@@ -125,7 +127,7 @@ func TestKeysNotices_WarningsAndTheOldDirHintNeverAKey(t *testing.T) {
 		t.Fatalf("nothing to say, got %q", b.String())
 	}
 	writeKeysFile(t, "not a pair "+keySecret+"\n")
-	oldDir := config.UserKeys().OldDir
+	oldDir := keys.User().OldDir
 	if err := os.MkdirAll(oldDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +247,7 @@ func TestKeys_ValueOnlyInTheKeyFile(t *testing.T) {
 			t.Errorf("the key is in a text: %q", tx)
 		}
 	}
-	keyFile := config.UserKeys().File
+	keyFile := keys.User().File
 	_ = filepath.Walk(dir, func(path string, fi os.FileInfo, err error) error {
 		if err != nil || fi.IsDir() || path == keyFile {
 			return nil

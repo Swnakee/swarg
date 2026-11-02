@@ -12,21 +12,21 @@ func TestProfile_RecordedAndReplayed(t *testing.T) {
 	if got := loadOK(t, w.Path()).Profile(); got != "" {
 		t.Errorf("a file without a prompt line has profile %q, want empty (the config decides)", got)
 	}
-	if err := w.Profile("standard"); err != nil {
+	if err := w.Profile("medium"); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewStore(w).Profile("full"); err != nil {
+	if err := NewStore(w).Profile("high"); err != nil {
 		t.Fatal(err)
 	}
 	l := loadOK(t, w.Path())
-	if l.Profile() != "full" {
-		t.Errorf("profile = %q, the last line (full) must win", l.Profile())
+	if l.Profile() != "high" {
+		t.Errorf("profile = %q, the last line (high) must win", l.Profile())
 	}
 	if len(l.Entries) != 1 {
 		t.Errorf("a profile line changed the history: %d entries", len(l.Entries))
 	}
 	lines := readLines(t, w.Path())
-	if got := lines[len(lines)-1]; got != `{"prompt":"full"}` {
+	if got := lines[len(lines)-1]; got != `{"prompt":"high"}` {
 		t.Errorf("line %s", got)
 	}
 }

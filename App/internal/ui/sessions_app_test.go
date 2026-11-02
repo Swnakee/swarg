@@ -13,6 +13,8 @@ import (
 
 	"swarg/internal/agent"
 	"swarg/internal/chat"
+	"swarg/internal/ui/hover"
+	"swarg/internal/ui/menu"
 )
 
 // ---------------------------------------------------------------------------
@@ -47,7 +49,7 @@ func TestPickerInApp_EnterOpensTheSelectedSession(t *testing.T) {
 	r.cmd("/sessions")
 	r.send(key(tea.KeyDown, 0)) // a (newest) -> b
 	r.send(key(tea.KeyEnter, 0))
-	if len(ss.loads) != 1 || ss.loads[0] != "b" || len(ag.loaded) != 1 || ag.loadOpts != 4 {
+	if len(ss.loads) != 1 || ss.loads[0] != "b" || len(ag.loaded) != 1 || ag.loadOpts != 5 {
 		t.Fatalf("opens %v, agent loads %d (opts %d)", ss.loads, len(ag.loaded), ag.loadOpts)
 	}
 	if r.m.pick != nil {
@@ -84,14 +86,14 @@ func TestPickerInApp_DeleteByMouseNeedsAConfirmClick(t *testing.T) {
 		t.Fatalf("row has no delete button: %q", r.rows()[y])
 	}
 	r.click(r.m.width-1, y) // the ✕
-	if !r.m.pick.confirm || len(ss.deleted) != 0 {
-		t.Fatalf("✕ click: confirm %v, deleted %v", r.m.pick.confirm, ss.deleted)
+	if !r.m.pick.Confirming() || len(ss.deleted) != 0 {
+		t.Fatalf("✕ click: confirm %v, deleted %v", r.m.pick.Confirming(), ss.deleted)
 	}
-	foot := pickerRow(t, r, btnCancel)
-	x := strings.Index(r.rows()[foot], btnCancel)
+	foot := pickerRow(t, r, menu.BtnCancel)
+	x := strings.Index(r.rows()[foot], menu.BtnCancel)
 	r.click(x+1, foot)
-	if r.m.pick.confirm || len(ss.deleted) != 0 {
-		t.Fatalf("[n] cancel: confirm %v, deleted %v", r.m.pick.confirm, ss.deleted)
+	if r.m.pick.Confirming() || len(ss.deleted) != 0 {
+		t.Fatalf("[n] cancel: confirm %v, deleted %v", r.m.pick.Confirming(), ss.deleted)
 	}
 	r.click(r.m.width-1, y)
 	foot = pickerRow(t, r, btnDelete)
@@ -134,11 +136,11 @@ func TestPickerInApp_CurrentSessionIsMarkedAndNeverDeleted(t *testing.T) {
 		t.Errorf("other row: %q", rows[yb])
 	}
 	r.send(ctrlD()) // the cursor is on a (newest)
-	if r.m.pick.confirm || len(ss.deleted) != 0 || !strings.Contains(r.view(), "cannot be deleted") {
-		t.Errorf("Ctrl+D on the current session: confirm %v deleted %v:\n%s", r.m.pick.confirm, ss.deleted, r.view())
+	if r.m.pick.Confirming() || len(ss.deleted) != 0 || !strings.Contains(r.view(), "cannot be deleted") {
+		t.Errorf("Ctrl+D on the current session: confirm %v deleted %v:\n%s", r.m.pick.Confirming(), ss.deleted, r.view())
 	}
 	r.click(r.m.width-1, ya) // no ✕ there: nothing happens
-	if r.m.pick.confirm || len(ss.loads) != 0 {
+	if r.m.pick.Confirming() || len(ss.loads) != 0 {
 		t.Error("a click at the end of the current row did something")
 	}
 }
@@ -187,11 +189,11 @@ func TestPickerInApp_HoverOnRowsAndButtons(t *testing.T) {
 
 // underlinedText is the plain text between the first underline on and the underline off.
 func underlinedText(raw string) string {
-	_, after, ok := strings.Cut(raw, underlineOn)
+	_, after, ok := strings.Cut(raw, hover.UnderlineOn)
 	if !ok {
 		return ""
 	}
-	mid, _, _ := strings.Cut(after, underlineOff)
+	mid, _, _ := strings.Cut(after, hover.UnderlineOff)
 	return ansi.Strip(mid)
 }
 
@@ -202,7 +204,7 @@ func TestPickerInApp_CutFooterLeavesNoDeleteTarget(t *testing.T) {
 	r.send(tea.WindowSizeMsg{Width: 80, Height: 6}) // list area of 2 rows: header + one row, no footer
 	r.cmd("/sessions")
 	r.send(ctrlD())
-	if !r.m.pick.confirm {
+	if !r.m.pick.Confirming() {
 		t.Fatal("no confirmation pending")
 	}
 	rows := r.rows()
@@ -235,8 +237,8 @@ func TestPickerInApp_KeysGoToThePickerNotTheInput(t *testing.T) {
 	for _, ch := range "t-b" {
 		r.send(ptype(string(ch)))
 	}
-	if r.m.pick.filter != "t-b" || len(r.m.pick.vis) != 1 {
-		t.Errorf("filter %q, %d rows", r.m.pick.filter, len(r.m.pick.vis))
+	if r.m.pick.Filter() != "t-b" || len(r.m.pick.VisibleIDs()) != 1 {
+		t.Errorf("filter %q, %d rows", r.m.pick.Filter(), len(r.m.pick.VisibleIDs()))
 	}
 	if r.m.ta.Value() != "" {
 		t.Errorf("typed text reached the input: %q", r.m.ta.Value())
@@ -267,8 +269,8 @@ func TestPickerInApp_WheelScrollsTheList(t *testing.T) {
 	r.cmd("/sessions")
 	r.view()
 	r.send(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	if r.m.pick.top != wheelRows || r.m.sc != (scrollState{follow: true}) {
-		t.Errorf("wheel: picker top %d, list scroll %+v", r.m.pick.top, r.m.sc)
+	if r.m.pick.Top() != wheelRows || r.m.sc != (scrollState{follow: true}) {
+		t.Errorf("wheel: picker top %d, list scroll %+v", r.m.pick.Top(), r.m.sc)
 	}
 }
 

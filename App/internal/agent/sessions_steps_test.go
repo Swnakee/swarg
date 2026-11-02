@@ -65,6 +65,7 @@ func (p proxyStore) Thinking(on bool) error                { return p.cur().Thin
 func (p proxyStore) Model(name string) error               { return p.cur().Model(name) }
 func (p proxyStore) Provider(name string) error            { return p.cur().Provider(name) }
 func (p proxyStore) Spend(model string, usd float64) error { return p.cur().Spend(model, usd) }
+func (p proxyStore) Usage(a, b, c int) error               { return p.cur().Usage(a, b, c) }
 
 type noStore struct{}
 
@@ -78,6 +79,7 @@ func (noStore) Flush() error                         { return nil }
 func (noStore) Model(string) error                   { return nil }
 func (noStore) Provider(string) error                { return nil }
 func (noStore) Spend(string, float64) error          { return nil }
+func (noStore) Usage(int, int, int) error            { return nil }
 
 // plugSessions wires the SessionFile into the Deps; called by begin.
 func (w *world) plugSessions(d *Deps) error {
@@ -172,7 +174,7 @@ func (w *world) resume() error {
 	}
 	w.tb.Cleanup(func() { wr.Close() })
 	s.writer = wr
-	if err := w.ag.Load(l.Messages(), WithMaxSeq(l.MaxSeq()), WithModel(l.Model()), WithThinking(l.Thinking()), WithSpend(l.Spend())); err != nil {
+	if err := w.ag.Load(l.Messages(), WithMaxSeq(l.MaxSeq()), WithModel(l.Model()), WithThinking(l.Thinking()), WithSpend(l.Spend()), WithTokens(tokensOfLoaded(l))); err != nil {
 		return err
 	}
 	s.during = w.ag.History()

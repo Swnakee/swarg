@@ -75,7 +75,7 @@ func (t Tool) Run(_ context.Context, _ tools.Env, args json.RawMessage) (tools.R
 	}
 	t.set.mu.Lock()
 	k := t.set.find(a.Name)
-	known := t.set.names(true)
+	known := list(t.set.names(true))
 	t.set.mu.Unlock()
 	switch {
 	case k == nil:

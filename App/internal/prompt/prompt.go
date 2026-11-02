@@ -1,9 +1,10 @@
 // Package prompt assembles the system prompt from named Blocks: the built-in
-// base text, global NN-name.md files, the project SWARG.md and the env block.
+// base text, global NN-name.md files, the project rules file (SWARG.md, else AGENTS.md, else CLAUDE.md) and the env block.
 // Blocks can be switched on and off at runtime.
 package prompt
 
 import (
+	"cmp"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -13,8 +14,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
-
 	"strconv"
 	"strings"
 	"swarg/internal/chat"
@@ -46,9 +45,11 @@ const (
 	orderBase    = 0
 	orderProject = 1000
 	orderEnv     = 2000
-
-	projectFile = "SWARG.md"
 )
+
+// projectFiles are the project rules files in order of preference; the first one found in
+// the working directory is read, the others are ignored (R-135).
+var projectFiles = []string{"SWARG.md", "AGENTS.md", "CLAUDE.md"}
 
 //go:embed base.md
 var baseText string
@@ -63,7 +64,10 @@ type Block struct {
 }
 
 // Env describes the session for the env block.
-type Env struct{ OS, Shell, Dir, Date, Model string }
+type Env struct {
+	OS, Shell, Dir, Date, Model string
+	Git                         bool // Dir is inside a git work tree (InGitRepo, R-136)
+}
 
 // BlockInfo is a read-only view of a Block for listings.
 type BlockInfo struct {
@@ -88,7 +92,7 @@ type Set struct {
 // ---------------------------------------------------------------------------
 
 // Load builds the set: base (embedded base.md) + global NN-name.md files from
-// globalDir (a missing dir means none) + SWARG.md from cwd only + the env block
+// globalDir (a missing dir means none) + the first of SWARG.md, AGENTS.md, CLAUDE.md found in cwd only (R-135) + the env block
 // + the extra blocks (for example tool blocks), enabled and added as given.
 // A <name>.md file in globalDir replaces the text of the base or tool Block of that name
 // (global, project and env Blocks cannot be replaced) and is reported in warnings (R-49).
@@ -106,13 +110,16 @@ func Load(globalDir, cwd string, env Env, extra ...Block) (set *Set, warnings []
 	}
 	blocks = append(blocks, global...)
 
-	project, err := readText(filepath.Join(cwd, projectFile))
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-	case err != nil:
-		return nil, nil, err
-	default:
+	for _, name := range projectFiles {
+		project, err := readText(filepath.Join(cwd, name))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, nil, err
+		}
 		blocks = append(blocks, Block{Name: nameProject, Source: SourceProject, Order: orderProject, Text: project, Enabled: true})
+		break
 	}
 
 	blocks = append(blocks, Block{Name: nameEnv, Source: SourceEnv, Order: orderEnv, Text: envText(env), Enabled: true})
@@ -121,8 +128,17 @@ func Load(globalDir, cwd string, env Env, extra ...Block) (set *Set, warnings []
 		blocks = append(blocks, b)
 	}
 	layers := defaultLayers()
+	stems := map[string]string{} // layer name -> file stem, when the file has an old name (R-134)
+	for old, name := range map[string]string{oldNameMedium: nameMedium, oldNameHigh: nameHigh} {
+		if text, ok := overrides[old]; ok {
+			delete(overrides, old)
+			if _, newer := overrides[name]; !newer {
+				overrides[name], stems[name] = text, old
+			}
+		}
+	}
 	for _, name := range slices.Sorted(maps.Keys(overrides)) { // sorted: stable warnings
-		path := filepath.Join(globalDir, name+".md")
+		path := filepath.Join(globalDir, cmp.Or(stems[name], name)+".md")
 		if k := layerIndex(layers, name); k >= 0 { // a Profile layer (R-119)
 			layers[k].Text = overrides[name]
 			warnings = append(warnings, fmt.Sprintf("prompt: block %q replaced by %s", name, path))
@@ -138,23 +154,20 @@ func Load(globalDir, cwd string, env Env, extra ...Block) (set *Set, warnings []
 	}
 
 	sortBlocks(blocks)
-	return &Set{blocks: blocks, env: env, layers: layers, profile: Compact}, warnings, nil
+	return &Set{blocks: blocks, env: env, layers: layers, profile: Low}, warnings, nil
 }
 
 // sortBlocks orders Blocks by Order, then Name.
 func sortBlocks(blocks []Block) {
-	sort.Slice(blocks, func(i, j int) bool {
-		if blocks[i].Order != blocks[j].Order {
-			return blocks[i].Order < blocks[j].Order
-		}
-		return blocks[i].Name < blocks[j].Name
+	slices.SortFunc(blocks, func(a, b Block) int {
+		return cmp.Or(cmp.Compare(a.Order, b.Order), strings.Compare(a.Name, b.Name))
 	})
 }
 
 // checkUnique rejects a block whose name repeats another checked name or a
 // reserved fixed name (including the Profile layer names). The fixed names count even when their block is absent.
 func checkUnique(blocks []Block) error {
-	seen := map[string]bool{nameBase: true, nameProject: true, nameEnv: true, nameStandard: true, nameFull: true, nameSubagent: true}
+	seen := map[string]bool{nameBase: true, nameProject: true, nameEnv: true, nameMedium: true, nameHigh: true, nameSubagent: true}
 	for _, b := range blocks {
 		if seen[b.Name] {
 			return fmt.Errorf("prompt: duplicate block name %q", b.Name)
@@ -163,6 +176,9 @@ func checkUnique(blocks []Block) error {
 	}
 	return nil
 }
+
+// globalFile matches NN-name.md (a block) and name.md (an override candidate): group 1 is NN or empty, group 2 the name.
+var globalFile = regexp.MustCompile(`^(?:(\d{2})-)?([a-z0-9_-]+)\.md$`)
 
 // loadGlobal reads globalDir: NN-name.md files become blocks, plain name.md files are
 // override candidates (stem -> text, resolved by Load); every other entry gets a warning.
@@ -174,13 +190,10 @@ func loadGlobal(dir string) (blocks []Block, overrides map[string]string, warnin
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("prompt: read dir %s: %w", dir, err)
 	}
-	pattern := regexp.MustCompile(`^(\d{2})-([a-z0-9_-]+)\.md$`)
-	plain := regexp.MustCompile(`^([a-z0-9_-]+)\.md$`)
 	overrides = map[string]string{}
 	for _, e := range entries {
-		m := pattern.FindStringSubmatch(e.Name())
-		o := plain.FindStringSubmatch(e.Name())
-		if e.IsDir() || (m == nil && o == nil) {
+		m := globalFile.FindStringSubmatch(e.Name())
+		if e.IsDir() || m == nil {
 			warnings = append(warnings, fmt.Sprintf("prompt: skipped %s: not an NN-name.md file", filepath.Join(dir, e.Name())))
 			continue
 		}
@@ -188,8 +201,8 @@ func loadGlobal(dir string) (blocks []Block, overrides map[string]string, warnin
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		if m == nil {
-			overrides[o[1]] = text
+		if m[1] == "" {
+			overrides[m[2]] = text
 			continue
 		}
 		order, _ := strconv.Atoi(m[1]) // the regexp guarantees two digits
@@ -209,8 +222,27 @@ func readText(path string) (string, error) {
 
 // envText renders the env block lines.
 func envText(e Env) string {
-	return fmt.Sprintf("OS: %s\nShell: %s\nWorking directory: %s\nDate: %s\nModel: %s",
-		e.OS, e.Shell, e.Dir, e.Date, e.Model)
+	git := "no"
+	if e.Git {
+		git = "yes"
+	}
+	return fmt.Sprintf("OS: %s\nShell: %s\nWorking directory: %s\nGit repo: %s\nDate: %s\nModel: %s",
+		e.OS, e.Shell, e.Dir, git, e.Date, e.Model)
+}
+
+// InGitRepo reports whether dir or a parent folder holds a .git entry (a directory, or a file
+// in a linked work tree). It does not run git (R-136).
+func InGitRepo(dir string) bool {
+	for {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			return true
+		}
+		up := filepath.Dir(dir)
+		if up == dir {
+			return false
+		}
+		dir = up
+	}
 }
 
 // ---------------------------------------------------------------------------

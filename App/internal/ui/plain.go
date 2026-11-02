@@ -8,6 +8,7 @@ import (
 
 	"swarg/internal/agent"
 	"swarg/internal/chat"
+	"swarg/internal/ui/command"
 )
 
 // ---------------------------------------------------------------------------
@@ -36,7 +37,7 @@ func RunPlain(ctx context.Context, d Deps, in io.Reader, out io.Writer) error {
 	// The agent must not see ctx cancelled: cutting a request wedges the
 	// single-lane server, so Ctrl+C only asks for Interrupt (drain).
 	d.Agent.Start(context.WithoutCancel(ctx))
-	if c, err := ParseCommand(text); err == nil && c.Kind == KindSkill {
+	if c, err := command.Parse(text); err == nil && c.Kind == command.KindSkill {
 		ss, ok := d.Agent.(skillSubmitter)
 		if !ok {
 			fmt.Fprintln(out, "no skills loaded")

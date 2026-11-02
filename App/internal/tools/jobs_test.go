@@ -331,6 +331,7 @@ func TestJobs_KillTwiceAndFinished(t *testing.T) {
 	}
 }
 
+// R-15
 func TestJobs_KillAll(t *testing.T) {
 	j := newJobs(t)
 	var ids []string

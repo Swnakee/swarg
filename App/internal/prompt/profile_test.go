@@ -23,44 +23,44 @@ func loadProfile(t *testing.T, global string) (*Set, string) {
 func TestProfile_CompactByteIdentical(t *testing.T) {
 	s, cwd := loadProfile(t, t.TempDir())
 	if got, want := s.Build(), testBase+"\n\n"+envBlock(cwd); got != want {
-		t.Errorf("compact Build changed:\n%s\nwant:\n%s", got, want)
+		t.Errorf("low Build changed:\n%s\nwant:\n%s", got, want)
 	}
-	if s.Profile() != Compact {
-		t.Errorf("Profile() = %q after Load, want compact", s.Profile())
+	if s.Profile() != Low {
+		t.Errorf("Profile() = %q after Load, want low", s.Profile())
 	}
 	if n := len(blockNames(s)); n != 2 {
-		t.Errorf("compact lists %d blocks (%v), want base and env only", n, blockNames(s))
+		t.Errorf("low lists %d blocks (%v), want base and env only", n, blockNames(s))
 	}
 }
 
 func TestSetProfile_LayersAreCumulative(t *testing.T) {
 	s, cwd := loadProfile(t, t.TempDir())
-	std, full := strings.TrimSpace(standardText), strings.TrimSpace(fullText)
+	std, high := strings.TrimSpace(mediumText), strings.TrimSpace(highText)
 
-	if err := s.SetProfile(Standard); err != nil {
+	if err := s.SetProfile(Medium); err != nil {
 		t.Fatal(err)
 	}
 	got := s.Build()
-	if !strings.Contains(got, std) || strings.Contains(got, full) {
-		t.Errorf("standard must carry the standard layer only")
+	if !strings.Contains(got, std) || strings.Contains(got, high) {
+		t.Errorf("medium must carry the medium layer only")
 	}
 	if !strings.HasPrefix(got, testBase+"\n\n"+std) || !strings.HasSuffix(got, envBlock(cwd)) {
-		t.Errorf("standard order wrong: base, layer, env expected")
+		t.Errorf("medium order wrong: base, layer, env expected")
 	}
 
-	if err := s.SetProfile(Full); err != nil {
+	if err := s.SetProfile(High); err != nil {
 		t.Fatal(err)
 	}
 	got = s.Build()
-	if !strings.Contains(got, std+"\n\n"+full) {
-		t.Errorf("full must carry the standard layer and then the full layer")
+	if !strings.Contains(got, std+"\n\n"+high) {
+		t.Errorf("high must carry the medium layer and then the high layer")
 	}
 
-	if err := s.SetProfile(Compact); err != nil {
+	if err := s.SetProfile(Low); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := s.Build(), testBase+"\n\n"+envBlock(cwd); got != want {
-		t.Errorf("back to compact is not byte-identical:\n%s", got)
+		t.Errorf("back to low is not byte-identical:\n%s", got)
 	}
 }
 
@@ -70,18 +70,18 @@ func TestSetProfile_LayersSitBeforeToolBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetProfile(Full); err != nil {
+	if err := s.SetProfile(High); err != nil {
 		t.Fatal(err)
 	}
 	got := s.Build()
-	if strings.Index(got, strings.TrimSpace(fullText)) > strings.Index(got, "TOOLX") {
+	if strings.Index(got, strings.TrimSpace(highText)) > strings.Index(got, "TOOLX") {
 		t.Error("the layers must come before the tool blocks")
 	}
 }
 
 func TestSetProfile_Unknown(t *testing.T) {
 	s, _ := loadProfile(t, t.TempDir())
-	_ = s.SetProfile(Standard)
+	_ = s.SetProfile(Medium)
 	err := s.SetProfile("huge")
 	if err == nil {
 		t.Fatal("unknown profile accepted")
@@ -91,7 +91,7 @@ func TestSetProfile_Unknown(t *testing.T) {
 			t.Errorf("error %q does not list %q", err, p)
 		}
 	}
-	if s.Profile() != Standard {
+	if s.Profile() != Medium {
 		t.Errorf("a refused switch changed the profile to %q", s.Profile())
 	}
 }
@@ -102,7 +102,7 @@ func TestParseProfile(t *testing.T) {
 			t.Errorf("ParseProfile(%q) = %q, %v", p, got, err)
 		}
 	}
-	for _, bad := range []string{"", "Standard", "big"} {
+	for _, bad := range []string{"", "Medium", "big"} {
 		if _, err := ParseProfile(bad); err == nil {
 			t.Errorf("ParseProfile(%q) = nil error", bad)
 		}
@@ -111,29 +111,29 @@ func TestParseProfile(t *testing.T) {
 
 func TestLoad_ProfileOverride(t *testing.T) {
 	global := t.TempDir()
-	writeFile(t, filepath.Join(global, "profile-standard.md"), "MY STANDARD\n")
-	writeFile(t, filepath.Join(global, "profile-full.md"), "MY FULL\n")
+	writeFile(t, filepath.Join(global, "profile-medium.md"), "MY MEDIUM\n")
+	writeFile(t, filepath.Join(global, "profile-high.md"), "MY HIGH\n")
 	cwd := t.TempDir()
 	s, warnings, err := Load(global, cwd, testEnv(cwd))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(warnings) != 2 || !strings.Contains(warnings[0], "profile-full") || !strings.Contains(warnings[1], "profile-standard") {
+	if len(warnings) != 2 || !strings.Contains(warnings[0], "profile-high") || !strings.Contains(warnings[1], "profile-medium") {
 		t.Errorf("warnings = %v, want one per replaced layer", warnings)
 	}
-	if strings.Contains(s.Build(), "MY STANDARD") {
-		t.Error("compact must not carry an overridden layer")
+	if strings.Contains(s.Build(), "MY MEDIUM") {
+		t.Error("low must not carry an overridden layer")
 	}
-	_ = s.SetProfile(Full)
+	_ = s.SetProfile(High)
 	got := s.Build()
-	if !strings.Contains(got, "MY STANDARD\n\nMY FULL") || strings.Contains(got, "## How you work") {
+	if !strings.Contains(got, "MY MEDIUM\n\nMY HIGH") || strings.Contains(got, "## How you work") {
 		t.Errorf("override files not applied:\n%.300s", got)
 	}
 }
 
 func TestSubagentsPlaceholder_EmptyNoGap(t *testing.T) {
 	s, _ := loadProfile(t, t.TempDir())
-	_ = s.SetProfile(Standard)
+	_ = s.SetProfile(Medium)
 	if strings.Contains(s.Build(), "\n\n\n") {
 		t.Error("the empty sub-agent placeholder left a blank gap")
 	}
@@ -147,7 +147,7 @@ func TestSubagentsPlaceholder_EmptyNoGap(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("the subagents placeholder is missing from the standard profile")
+		t.Error("the subagents placeholder is missing from the medium profile")
 	}
 	if err := s.SetText("subagents", "DELEGATE"); err != nil {
 		t.Fatal(err)
@@ -155,18 +155,18 @@ func TestSubagentsPlaceholder_EmptyNoGap(t *testing.T) {
 	if !strings.Contains(s.Build(), "DELEGATE") {
 		t.Error("SetText on the placeholder is not shown")
 	}
-	_ = s.SetProfile(Compact)
+	_ = s.SetProfile(Low)
 	if strings.Contains(s.Build(), "DELEGATE") {
-		t.Error("compact must never carry sub-agent policy")
+		t.Error("low must never carry sub-agent policy")
 	}
-	_ = s.SetProfile(Full)
+	_ = s.SetProfile(High)
 	if !strings.Contains(s.Build(), "DELEGATE") {
 		t.Error("the text set on the placeholder was lost across profile switches")
 	}
 }
 
 func TestLoad_LayerNamesAreReserved(t *testing.T) {
-	for _, name := range []string{"profile-standard", "profile-full", "subagents"} {
+	for _, name := range []string{"profile-medium", "profile-high", "subagents"} {
 		global := t.TempDir()
 		writeFile(t, filepath.Join(global, "10-"+name+".md"), "x")
 		cwd := t.TempDir()
@@ -178,8 +178,8 @@ func TestLoad_LayerNamesAreReserved(t *testing.T) {
 
 func TestLayers_NoInternalNamesOrToolJSON(t *testing.T) {
 	jsonCall := regexp.MustCompile(`\{\s*"[a-z_]+"\s*:`)
-	for name, text := range map[string]string{"standard": standardText, "full": fullText} {
-		for _, internal := range []string{"profile-standard", "profile-full", "subagents", "tool-"} {
+	for name, text := range map[string]string{"medium": mediumText, "high": highText} {
+		for _, internal := range []string{"profile-medium", "profile-high", "subagents", "tool-"} {
 			if strings.Contains(text, internal) {
 				t.Errorf("%s layer mentions the internal name %q", name, internal)
 			}
@@ -195,9 +195,9 @@ func TestLayers_NoInternalNamesOrToolJSON(t *testing.T) {
 
 func TestProfileTokens_Grows(t *testing.T) {
 	s, _ := loadProfile(t, t.TempDir())
-	c, st, f := s.ProfileTokens(Compact), s.ProfileTokens(Standard), s.ProfileTokens(Full)
+	c, st, f := s.ProfileTokens(Low), s.ProfileTokens(Medium), s.ProfileTokens(High)
 	if c != chat.EstimateTokens(testBase) || !(c < st && st < f) {
-		t.Errorf("sizes compact %d, standard %d, full %d", c, st, f)
+		t.Errorf("sizes low %d, medium %d, high %d", c, st, f)
 	}
 }
 

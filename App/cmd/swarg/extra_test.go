@@ -28,6 +28,7 @@ func skillDir(t *testing.T, n, descLen int) string {
 	return dir
 }
 
+// R-89
 func TestExtraPromptWarning_UnderAndOver(t *testing.T) {
 	sk, _ := skills.Load(skillDir(t, 2, 40), t.TempDir(), nil)
 	if w := extraPromptWarning(sk, nil); w != "" {

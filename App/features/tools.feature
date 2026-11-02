@@ -24,7 +24,7 @@ Feature: Tools
 
   Rule: Wrong ToolCalls return an error to the Provider
 
-    @S-040
+    @S-040 @R-6
     Scenario: An unknown Tool name returns an error ToolResult
       Given a Provider that calls the Tool "teleport" and then answers "ok"
       When the user submits "go"
@@ -56,7 +56,7 @@ Feature: Tools
 
   Rule: Tools stay inside the project folder
 
-    @S-044
+    @S-044 @I-4
     Scenario: A path outside the project folder is refused
       Given a Provider that calls "read_file" for "../secret.txt" and then answers "ok"
       When the user submits "go"
@@ -69,7 +69,7 @@ Feature: Tools
       When the user submits "go"
       Then the second request contains a ToolResult with the text "inner"
 
-    @S-046
+    @S-046 @I-4
     Scenario: A symlink leading outside the project folder is refused
       Given a symlink "link" to a file outside the project folder
       And a Provider that calls "read_file" for "link" and then answers "ok"
@@ -92,7 +92,7 @@ Feature: Tools
       When the user submits "go"
       Then the second request contains a ToolResult with the text "debug: true"
 
-    @S-168
+    @S-168 @I-4
     Scenario: A root-style path climbing out of the project folder is refused
       Given a Provider that calls "read_file" for "/../etc/passwd" and then answers "ok"
       When the user submits "go"

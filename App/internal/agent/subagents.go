@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"swarg/internal/agent/guard"
 	"swarg/internal/chat"
 )
 
@@ -61,7 +62,7 @@ type AgentRun struct {
 // AgentDeps connect the agent runtime to the config and the prompt. A nil Types or Open means no
 // agents at all.
 type AgentDeps struct {
-	Types func() []AgentType                  // the types offered now; none = the `agent` Tool is not offered (compact profile, all off)
+	Types func() []AgentType                  // the types offered now; none = the `agent` Tool is not offered (low profile, all off)
 	Open  func(t AgentType) (AgentRun, error) // resolves the Source and the system prompt of a run
 	Slots func(source string) int             // requests at once on a Source (max_parallel); nil or < 1 = 1
 	Max   int                                 // agents at once over all Sources; 0 or more than 4 = 4
@@ -219,13 +220,10 @@ func (a *Agent) runAgent(parent *conversation, p pendingCall, shown chat.ToolCal
 	if got {
 		defer release()
 		a.agentProgress(c, "model "+run.Source.Model+"\n")
-		var repeats repeatGuard
+		var repeats guard.Repeat
 		r, msg = a.runLoop(c, &repeats)
 	} else {
-		r = &turnResult{finish: chat.FinishInterrupted, status: statusInterrupted}
-		if a.wasAborted() {
-			r.status = statusAborted
-		}
+		r = &turnResult{finish: chat.FinishInterrupted, status: a.interruptedStatus()}
 	}
 	res := a.taskResult(c, r, msg)
 	a.trace("agent_end", map[string]any{"id": c.id, "status": r.status, "steps": r.steps, "result": res.output})
@@ -293,5 +291,10 @@ func (a *Agent) agentApproval(ctx context.Context, call chat.ToolCall) (Approval
 		return Approval{}, false
 	}
 	defer func() { <-a.approving }()
+	// Esc wins over a freed slot: select picks at random when both are ready, and Interrupt
+	// cancels the agents' contexts one by one after setting interrupted.
+	if ctx.Err() != nil || a.isInterrupted() {
+		return Approval{}, false
+	}
 	return a.deps.Approve(ctx, call), true
 }

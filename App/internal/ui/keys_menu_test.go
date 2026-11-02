@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"strings"
+	"swarg/internal/ui/command"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -55,11 +56,11 @@ func keysRig(t *testing.T) (*rig, *fakeKeys) {
 func TestParseCommand_Keys(t *testing.T) {
 	tests := []struct {
 		line    string
-		want    Command
+		want    command.Command
 		errPart string
 	}{
-		{line: "/keys", want: Command{Kind: KindKeys}},
-		{line: "/keys init", want: Command{Kind: KindKeys, Text: "init"}},
+		{line: "/keys", want: command.Command{Kind: command.KindKeys}},
+		{line: "/keys init", want: command.Command{Kind: command.KindKeys, Text: "init"}},
 		{line: "/keys set OPENROUTER_API_KEY", errPart: "usage: /keys"}, // typing a key is gone
 		{line: "/keys delete MCP_TOKEN", errPart: "usage: /keys"},
 		{line: "/keys x", errPart: "usage: /keys"},
@@ -68,7 +69,7 @@ func TestParseCommand_Keys(t *testing.T) {
 		{line: "/keys " + testSecret, errPart: "usage: /keys"},                        // the "word" is the key
 	}
 	for _, tc := range tests {
-		got, err := ParseCommand(tc.line)
+		got, err := command.Parse(tc.line)
 		switch {
 		case tc.errPart != "":
 			if err == nil || !strings.Contains(err.Error(), tc.errPart) {
@@ -82,6 +83,7 @@ func TestParseCommand_Keys(t *testing.T) {
 	}
 }
 
+// I-38
 func TestKeysCommand_InlineValueIsRefusedAndNeverShown(t *testing.T) {
 	r, fk := keysRig(t)
 	r.cmd("/keys set OPENROUTER_API_KEY " + testSecret)
@@ -176,6 +178,7 @@ func TestKeysMenu_IKeyCreatesTheTemplate(t *testing.T) {
 
 // There is no way to enter a key in the menu: Enter, d, n and Right change nothing and open no
 // field (R-108).
+// I-38
 func TestKeysMenu_HasNoTextEntry(t *testing.T) {
 	r, fk := keysRig(t)
 	r.cmd("/keys")
@@ -221,6 +224,7 @@ func TestConfigMenu_KeysRowOpensKeysAndEscReturns(t *testing.T) {
 // K5: a key-like message is held back once
 // ---------------------------------------------------------------------------
 
+// R-109
 func TestLooksLikeKey(t *testing.T) {
 	for text, want := range map[string]bool{
 		"hello":                                  false,
@@ -236,6 +240,7 @@ func TestLooksLikeKey(t *testing.T) {
 	}
 }
 
+// R-109, I-38
 func TestSubmit_KeyLikeTextIsHeldBackOnceThenSent(t *testing.T) {
 	r, _ := keysRig(t)
 	text := "my key is " + testSecret

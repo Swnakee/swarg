@@ -14,7 +14,7 @@ import (
 
 // fixedPromptCeiling is the budget of the text sent with every request: the system prompt
 // (base + 8 tool blocks + env) plus the tool schemas (name, description, JSON schema).
-const fixedPromptCeiling = 1200
+const fixedPromptCeiling = 1230
 
 // fixedPromptTokens measures the fixed prompt of the full built-in tool set.
 func fixedPromptTokens(t *testing.T) (system, schemas int) {

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"swarg/internal/agent"
 	"swarg/internal/chat"
 	"swarg/internal/session"
 )
@@ -205,6 +206,7 @@ func TestSaving_RenameConcurrentWithStore(t *testing.T) {
 	}
 }
 
+// R-26
 func TestSaving_DeleteSparesTheCurrentSession(t *testing.T) {
 	dir := t.TempDir()
 	pathA := savedSession(t, dir, "aaaaaa", "hello")
@@ -259,6 +261,34 @@ func TestSaving_SpendIsRecordedAndComesBackOnOpenAndResume(t *testing.T) {
 	back, err := openSaving(dir, session.Info{Path: path}, session.Header{}, true, false, 0, &cl2, io.Discard)
 	if err != nil || back.spend["a/m"] != 0.75 {
 		t.Fatalf("resume spend %v, %v; want 0.75", back.spend, err)
+	}
+	cl2.Run()
+}
+
+// A response's tokens go to the SessionFile; opening or resuming that session brings them back (R-131).
+func TestSaving_UsageIsRecordedAndComesBackOnOpenAndResume(t *testing.T) {
+	dir := t.TempDir()
+	sv, cl := newSaving(t, dir)
+	st := swStore{sv}
+	if err := st.Message(chat.Message{Role: chat.RoleUser, Content: "hi", Seq: 1}); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range [][3]int{{100, 60, 10}, {50, 0, 5}} {
+		if err := st.Usage(u[0], u[1], u[2]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := agent.Tokens{Prompt: 150, Cached: 60, Completion: 15}
+	path, id := sv.w.Path(), sv.Current()
+	cl.Run()
+	other, _ := newSaving(t, dir)
+	if o, err := other.Open(id); err != nil || o.Tokens != want {
+		t.Fatalf("Open = %+v, %v; want tokens %+v", o.Tokens, err, want)
+	}
+	var cl2 cleanups
+	back, err := openSaving(dir, session.Info{Path: path}, session.Header{}, true, false, 0, &cl2, io.Discard)
+	if err != nil || back.tokens != want {
+		t.Fatalf("resume tokens %+v, %v; want %+v", back.tokens, err, want)
 	}
 	cl2.Run()
 }

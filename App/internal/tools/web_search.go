@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	"golang.org/x/net/html"
 
 	"swarg/internal/chat"
+	"swarg/internal/webget"
 )
 
 // ---------------------------------------------------------------------------
@@ -102,14 +104,14 @@ func (t WebSearch) Run(ctx context.Context, env Env, args json.RawMessage) (Resu
 }
 
 // searchSearx queries the JSON API of a SearXNG instance the user configured.
-func searchSearx(ctx context.Context, w Web, query string) ([]hit, error) {
+func searchSearx(ctx context.Context, w webget.Getter, query string) ([]hit, error) {
 	base, err := url.Parse(w.SearxURL)
 	if err != nil || base.Host == "" {
 		return nil, errors.New("web.searx_url is not a valid URL")
 	}
 	base.Path = strings.TrimRight(base.Path, "/") + "/search"
 	base.RawQuery = url.Values{"q": {query}, "format": {"json"}}.Encode()
-	body, _, err := w.get(ctx, base.String(), true)
+	body, _, err := w.Get(ctx, base.String(), true)
 	if err != nil {
 		return nil, err
 	}
@@ -127,12 +129,12 @@ func searchSearx(ctx context.Context, w Web, query string) ([]hit, error) {
 }
 
 // searchDDG reads the result links of the DuckDuckGo HTML page (class result__a / result__snippet).
-func searchDDG(ctx context.Context, w Web, query string) ([]hit, error) {
+func searchDDG(ctx context.Context, w webget.Getter, query string) ([]hit, error) {
 	endpoint := w.SearchURL
 	if endpoint == "" {
 		endpoint = defaultSearchURL
 	}
-	body, _, err := w.get(ctx, endpoint+"?"+url.Values{"q": {query}}.Encode(), true)
+	body, _, err := w.Get(ctx, endpoint+"?"+url.Values{"q": {query}}.Encode(), true)
 	if err != nil {
 		return nil, err
 	}
@@ -141,23 +143,19 @@ func searchDDG(ctx context.Context, w Web, query string) ([]hit, error) {
 		return nil, err
 	}
 	var hits []hit
-	var walk func(n *html.Node)
-	walk = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "a" {
-			switch {
-			case hasClass(n, "result__a"):
-				if u := resultURL(attr(n, "href")); u != "" {
-					hits = append(hits, hit{title: oneLine(nodeText(n)), url: u})
-				}
-			case hasClass(n, "result__snippet") && len(hits) > 0 && hits[len(hits)-1].snippet == "":
-				hits[len(hits)-1].snippet = oneLine(nodeText(n))
-			}
+	for n := range doc.Descendants() {
+		if n.Type != html.ElementNode || n.Data != "a" {
+			continue
 		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
+		switch {
+		case hasClass(n, "result__a"):
+			if u := resultURL(webget.Attr(n, "href")); u != "" {
+				hits = append(hits, hit{title: oneLine(nodeText(n)), url: u})
+			}
+		case hasClass(n, "result__snippet") && len(hits) > 0 && hits[len(hits)-1].snippet == "":
+			hits[len(hits)-1].snippet = oneLine(nodeText(n))
 		}
 	}
-	walk(doc)
 	return hits, nil
 }
 
@@ -176,38 +174,24 @@ func resultURL(href string) string {
 	if strings.HasPrefix(href, "//") {
 		href = "https:" + href
 	}
-	if _, err := parseWebURL(href); err != nil {
+	if _, err := webget.ParseURL(href); err != nil {
 		return ""
 	}
 	return href
 }
 
-func attr(n *html.Node, key string) string {
-	for _, a := range n.Attr {
-		if a.Key == key {
-			return a.Val
-		}
-	}
-	return ""
-}
-
+// hasClass reports whether the class attribute of n lists class.
 func hasClass(n *html.Node, class string) bool {
-	for _, c := range strings.Fields(attr(n, "class")) {
-		if c == class {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Fields(webget.Attr(n, "class")), class)
 }
 
 // nodeText is all the text under n.
 func nodeText(n *html.Node) string {
-	if n.Type == html.TextNode {
-		return n.Data
-	}
 	var b strings.Builder
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		b.WriteString(nodeText(c))
+	for c := range n.Descendants() {
+		if c.Type == html.TextNode {
+			b.WriteString(c.Data)
+		}
 	}
 	return b.String()
 }

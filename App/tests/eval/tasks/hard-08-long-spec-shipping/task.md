@@ -1,0 +1,2 @@
+Implement one pricing function from a long carrier-integration spec, applying only the rules that matter (including amendments).
+SPEC.md is the long integration spec of our shipping platform. We only need the Domestic Ground price quote in this service: shipping.py has a stub quote() with the signature and the exceptions. Implement it following the spec (the spec says which parts concern this service). Don't implement the other services. tests/test_quote.py has one example; run it when you are done.

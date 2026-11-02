@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"swarg/internal/ui/menu"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -10,7 +11,7 @@ import (
 // Scrolling the conversation list
 // ---------------------------------------------------------------------------
 
-const wheelRows = 3 // rows per wheel notch
+const wheelRows = menu.WheelRows // rows per wheel notch
 
 // scrollState is the viewport position. While follow is set the view sits at the bottom and
 // stays there as rows arrive. Otherwise the top row is (aItem, aRow): a row inside an item,

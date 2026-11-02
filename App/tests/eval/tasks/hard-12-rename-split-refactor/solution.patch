@@ -1,0 +1,386 @@
+diff -ruN a/shop/account.py ref/shop/account.py
+--- a/shop/account.py	1970-01-01 03:00:00
++++ ref/shop/account.py	2026-11-01 03:48:47
+@@ -0,0 +1,19 @@
++import re
++from dataclasses import dataclass
++
++EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[a-z]{2,}$", re.I)
++
++
++@dataclass
++class Account:
++    id: int
++    name: str
++    email: str
++    balance_cents: int = 0
++    tier: str = "basic"
++
++
++def new_account(next_id, name, email):
++    if not EMAIL.match(email):
++        raise ValueError("invalid account email: %s" % email)
++    return Account(next_id, name.strip(), email.lower())
+diff -ruN a/shop/billing.py ref/shop/billing.py
+--- a/shop/billing.py	2026-11-01 03:49:12
++++ ref/shop/billing.py	2026-11-01 03:48:47
+@@ -1,15 +1,16 @@
+-from .orders import orders_for_customer, total_for_customer
+-from .utils import fmt_money, slug
++from .orders import orders_for_account, total_for_account
++from .money import fmt_money
++from .strings import slug
+ 
+ 
+-def invoice_for_customer(repo, customer_id):
+-    c = repo.get_customer(customer_id)
+-    lines = ["Invoice for %s (customer #%d)" % (c.name, c.id)]
+-    for o in orders_for_customer(repo, customer_id):
++def invoice_for_account(repo, account_id):
++    c = repo.get_account(account_id)
++    lines = ["Invoice for %s (account #%d)" % (c.name, c.id)]
++    for o in orders_for_account(repo, account_id):
+         lines.append("  order %d: %s [%s]" % (o.id, fmt_money(o.amount_cents), o.status))
+-    lines.append("Total: %s" % fmt_money(total_for_customer(repo, customer_id)))
++    lines.append("Total: %s" % fmt_money(total_for_account(repo, account_id)))
+     return "\n".join(lines) + "\n"
+ 
+ 
+-def invoice_filename(customer):
+-    return "invoice-%s-%d.txt" % (slug(customer.name), customer.id)
++def invoice_filename(account):
++    return "invoice-%s-%d.txt" % (slug(account.name), account.id)
+diff -ruN a/shop/cli.py ref/shop/cli.py
+--- a/shop/cli.py	2026-11-01 03:49:12
++++ ref/shop/cli.py	2026-11-01 03:48:47
+@@ -1,30 +1,30 @@
+ import os
+ 
+ from . import storage
+-from .billing import invoice_for_customer
+-from .customer import new_customer
++from .billing import invoice_for_account
++from .account import new_account
+ from .orders import place_order
+-from .repo import CustomerRepo
+-from .reports import customer_report
+-from .utils import fmt_money, parse_money
++from .repo import AccountRepo
++from .reports import account_report
++from .money import fmt_money, parse_money
+ 
+ 
+ def main(argv, db_path):
+-    repo = storage.load(db_path) if os.path.exists(db_path) else CustomerRepo()
++    repo = storage.load(db_path) if os.path.exists(db_path) else AccountRepo()
+     cmd, args = argv[0], argv[1:]
+-    if cmd == "add-customer":
+-        c = new_customer(repo.next_customer_id(), args[0], args[1])
+-        repo.add_customer(c)
++    if cmd == "add-account":
++        c = new_account(repo.next_account_id(), args[0], args[1])
++        repo.add_account(c)
+         storage.save(repo, db_path)
+-        return "added customer #%d\n" % c.id
+-    if cmd == "customers":
+-        return "".join("%d %s <%s>\n" % (c.id, c.name, c.email) for c in repo.customers()) or "no customers\n"
++        return "added account #%d\n" % c.id
++    if cmd == "accounts":
++        return "".join("%d %s <%s>\n" % (c.id, c.name, c.email) for c in repo.accounts()) or "no accounts\n"
+     if cmd == "order":
+         o = place_order(repo, int(args[0]), parse_money(args[1]))
+         storage.save(repo, db_path)
+-        return "order %d for customer #%s: %s\n" % (o.id, args[0], fmt_money(o.amount_cents))
++        return "order %d for account #%s: %s\n" % (o.id, args[0], fmt_money(o.amount_cents))
+     if cmd == "invoice":
+-        return invoice_for_customer(repo, int(args[0]))
++        return invoice_for_account(repo, int(args[0]))
+     if cmd == "report":
+-        return customer_report(repo)
++        return account_report(repo)
+     raise SystemExit("unknown command: %s" % cmd)
+diff -ruN a/shop/customer.py ref/shop/customer.py
+--- a/shop/customer.py	2026-11-01 03:49:12
++++ ref/shop/customer.py	1970-01-01 03:00:00
+@@ -1,19 +0,0 @@
+-import re
+-from dataclasses import dataclass
+-
+-EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[a-z]{2,}$", re.I)
+-
+-
+-@dataclass
+-class Customer:
+-    id: int
+-    name: str
+-    email: str
+-    balance_cents: int = 0
+-    tier: str = "basic"
+-
+-
+-def new_customer(next_id, name, email):
+-    if not EMAIL.match(email):
+-        raise ValueError("invalid customer email: %s" % email)
+-    return Customer(next_id, name.strip(), email.lower())
+diff -ruN a/shop/money.py ref/shop/money.py
+--- a/shop/money.py	1970-01-01 03:00:00
++++ ref/shop/money.py	2026-11-01 03:48:51
+@@ -0,0 +1,16 @@
++import re
++
++
++def fmt_money(cents):
++    sign = "-" if cents < 0 else ""
++    c = abs(cents)
++    return "%s$%s.%02d" % (sign, format(c // 100, ","), c % 100)
++
++
++def parse_money(text):
++    t = text.strip()
++    m = re.fullmatch(r"(-?)\$?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{2}))?", t)
++    if not m:
++        raise ValueError("bad money value: %r" % text)
++    cents = int(m.group(2).replace(",", "")) * 100 + int(m.group(3) or 0)
++    return -cents if m.group(1) else cents
+diff -ruN a/shop/notify.py ref/shop/notify.py
+--- a/shop/notify.py	2026-11-01 03:49:12
++++ ref/shop/notify.py	2026-11-01 03:48:47
+@@ -1,17 +1,17 @@
+-from .utils import fmt_money
++from .money import fmt_money
+ 
+ 
+-def welcome_email(customer):
+-    first = customer.name.split()[0] if customer.name.split() else customer.name
++def welcome_email(account):
++    first = account.name.split()[0] if account.name.split() else account.name
+     return {
+-        "to": customer.email,
++        "to": account.email,
+         "subject": "Welcome, %s" % first,
+-        "body": "Hello %s,\nYour customer number is #%d.\n" % (customer.name, customer.id),
++        "body": "Hello %s,\nYour account number is #%d.\n" % (account.name, account.id),
+     }
+ 
+ 
+-def low_balance_notice(customer, threshold_cents):
+-    if customer.balance_cents >= threshold_cents:
++def low_balance_notice(account, threshold_cents):
++    if account.balance_cents >= threshold_cents:
+         return None
+-    return "Dear customer %s, your balance %s is below %s." % (
+-        customer.name, fmt_money(customer.balance_cents), fmt_money(threshold_cents))
++    return "Dear account %s, your balance %s is below %s." % (
++        account.name, fmt_money(account.balance_cents), fmt_money(threshold_cents))
+diff -ruN a/shop/orders.py ref/shop/orders.py
+--- a/shop/orders.py	2026-11-01 03:49:12
++++ ref/shop/orders.py	2026-11-01 03:48:47
+@@ -4,23 +4,23 @@
+ @dataclass
+ class Order:
+     id: int
+-    customer_id: int
++    account_id: int
+     amount_cents: int
+     status: str = "open"
+ 
+ 
+-def place_order(repo, customer_id, amount_cents):
+-    repo.get_customer(customer_id)  # raises KeyError for an unknown customer
++def place_order(repo, account_id, amount_cents):
++    repo.get_account(account_id)  # raises KeyError for an unknown account
+     if amount_cents <= 0:
+         raise ValueError("order amount must be positive")
+-    order = Order(repo.next_order_id(), customer_id, amount_cents)
++    order = Order(repo.next_order_id(), account_id, amount_cents)
+     repo.add_order(order)
+     return order
+ 
+ 
+-def orders_for_customer(repo, customer_id):
+-    return [o for o in repo.orders() if o.customer_id == customer_id]
++def orders_for_account(repo, account_id):
++    return [o for o in repo.orders() if o.account_id == account_id]
+ 
+ 
+-def total_for_customer(repo, customer_id):
+-    return sum(o.amount_cents for o in orders_for_customer(repo, customer_id) if o.status != "cancelled")
++def total_for_account(repo, account_id):
++    return sum(o.amount_cents for o in orders_for_account(repo, account_id) if o.status != "cancelled")
+diff -ruN a/shop/repo.py ref/shop/repo.py
+--- a/shop/repo.py	2026-11-01 03:49:12
++++ ref/shop/repo.py	2026-11-01 03:48:47
+@@ -1,25 +1,25 @@
+-from .customer import Customer
++from .account import Account
+ 
+ 
+-class CustomerRepo:
+-    def __init__(self, customers=None, orders=None):
+-        self._customers = {c.id: c for c in customers or []}
++class AccountRepo:
++    def __init__(self, accounts=None, orders=None):
++        self._accounts = {c.id: c for c in accounts or []}
+         self._orders = list(orders or [])
+ 
+-    def add_customer(self, customer: Customer):
+-        self._customers[customer.id] = customer
++    def add_account(self, account: Account):
++        self._accounts[account.id] = account
+ 
+-    def get_customer(self, customer_id):
++    def get_account(self, account_id):
+         try:
+-            return self._customers[customer_id]
++            return self._accounts[account_id]
+         except KeyError:
+-            raise KeyError("customer %d not found" % customer_id)
++            raise KeyError("account %d not found" % account_id)
+ 
+-    def customers(self):
+-        return sorted(self._customers.values(), key=lambda c: c.id)
++    def accounts(self):
++        return sorted(self._accounts.values(), key=lambda c: c.id)
+ 
+-    def next_customer_id(self):
+-        return max(self._customers, default=0) + 1
++    def next_account_id(self):
++        return max(self._accounts, default=0) + 1
+ 
+     def add_order(self, order):
+         self._orders.append(order)
+diff -ruN a/shop/reports.py ref/shop/reports.py
+--- a/shop/reports.py	2026-11-01 03:49:12
++++ ref/shop/reports.py	2026-11-01 03:48:47
+@@ -1,9 +1,10 @@
+-from .utils import fmt_money, truncate
++from .money import fmt_money
++from .strings import truncate
+ 
+ 
+-def customer_report(repo):
+-    lines = ["Customer report"]
+-    for c in repo.customers():
++def account_report(repo):
++    lines = ["Account report"]
++    for c in repo.accounts():
+         lines.append("%-12s %12s  %s" % (truncate(c.name, 12), fmt_money(c.balance_cents), c.tier))
+-    lines.append("Total customers: %d" % len(repo.customers()))
++    lines.append("Total accounts: %d" % len(repo.accounts()))
+     return "\n".join(lines) + "\n"
+diff -ruN a/shop/storage.py ref/shop/storage.py
+--- a/shop/storage.py	2026-11-01 03:49:12
++++ ref/shop/storage.py	2026-11-01 03:48:47
+@@ -1,25 +1,25 @@
+ import json
+ 
+-from .customer import Customer
++from .account import Account
+ from .orders import Order
+-from .repo import CustomerRepo
++from .repo import AccountRepo
+ 
+ 
+ def load(path):
+     with open(path, encoding="utf-8") as f:
+         raw = json.load(f)
+-    customers = [Customer(c["customer_id"], c["name"], c["email"], c.get("balance_cents", 0), c.get("tier", "basic"))
++    accounts = [Account(c["customer_id"], c["name"], c["email"], c.get("balance_cents", 0), c.get("tier", "basic"))
+                  for c in raw.get("customers", [])]
+     orders = [Order(o["order_id"], o["customer_id"], o["amount_cents"], o.get("status", "open"))
+               for o in raw.get("orders", [])]
+-    return CustomerRepo(customers, orders)
++    return AccountRepo(accounts, orders)
+ 
+ 
+ def save(repo, path):
+     raw = {
+         "customers": [{"customer_id": c.id, "name": c.name, "email": c.email,
+-                       "balance_cents": c.balance_cents, "tier": c.tier} for c in repo.customers()],
+-        "orders": [{"order_id": o.id, "customer_id": o.customer_id, "amount_cents": o.amount_cents,
++                       "balance_cents": c.balance_cents, "tier": c.tier} for c in repo.accounts()],
++        "orders": [{"order_id": o.id, "customer_id": o.account_id, "amount_cents": o.amount_cents,
+                     "status": o.status} for o in repo.orders()],
+     }
+     with open(path, "w", encoding="utf-8") as f:
+diff -ruN a/shop/strings.py ref/shop/strings.py
+--- a/shop/strings.py	1970-01-01 03:00:00
++++ ref/shop/strings.py	2026-11-01 03:48:51
+@@ -0,0 +1,9 @@
++import re
++
++
++def slug(text):
++    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
++
++
++def truncate(text, n):
++    return text if len(text) <= n else text[:n - 1] + "~"
+diff -ruN a/shop/utils.py ref/shop/utils.py
+--- a/shop/utils.py	2026-11-01 03:49:12
++++ ref/shop/utils.py	1970-01-01 03:00:00
+@@ -1,24 +0,0 @@
+-import re
+-
+-
+-def fmt_money(cents):
+-    sign = "-" if cents < 0 else ""
+-    c = abs(cents)
+-    return "%s$%s.%02d" % (sign, format(c // 100, ","), c % 100)
+-
+-
+-def parse_money(text):
+-    t = text.strip()
+-    m = re.fullmatch(r"(-?)\$?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{2}))?", t)
+-    if not m:
+-        raise ValueError("bad money value: %r" % text)
+-    cents = int(m.group(2).replace(",", "")) * 100 + int(m.group(3) or 0)
+-    return -cents if m.group(1) else cents
+-
+-
+-def slug(text):
+-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+-
+-
+-def truncate(text, n):
+-    return text if len(text) <= n else text[:n - 1] + "~"
+diff -ruN a/tests/test_shop.py ref/tests/test_shop.py
+--- a/tests/test_shop.py	2026-11-01 03:49:12
++++ ref/tests/test_shop.py	2026-11-01 03:48:47
+@@ -5,9 +5,9 @@
+ 
+ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+ from shop import cli, storage  # noqa: E402
+-from shop.customer import new_customer  # noqa: E402
+-from shop.orders import total_for_customer  # noqa: E402
+-from shop.utils import fmt_money, parse_money  # noqa: E402
++from shop.account import new_account  # noqa: E402
++from shop.orders import total_for_account  # noqa: E402
++from shop.money import fmt_money, parse_money  # noqa: E402
+ 
+ DATA = os.path.join(os.path.dirname(__file__), "..", "data", "shop.json")
+ 
+@@ -19,17 +19,17 @@
+ 
+     def test_load_and_totals(self):
+         repo = storage.load(DATA)
+-        self.assertEqual(total_for_customer(repo, 1), 250000)
+-        self.assertEqual(total_for_customer(repo, 2), 4500)
++        self.assertEqual(total_for_account(repo, 1), 250000)
++        self.assertEqual(total_for_account(repo, 2), 4500)
+ 
+-    def test_new_customer_validates(self):
++    def test_new_account_validates(self):
+         with self.assertRaises(ValueError):
+-            new_customer(1, "X", "not-an-email")
++            new_account(1, "X", "not-an-email")
+ 
+     def test_cli_roundtrip(self):
+         path = os.path.join(tempfile.mkdtemp(), "db.json")
+-        self.assertEqual(cli.main(["add-customer", "Linus T", "l@example.org"], path), "added customer #1\n")
+-        self.assertIn("Linus T", cli.main(["customers"], path))
++        self.assertEqual(cli.main(["add-account", "Linus T", "l@example.org"], path), "added account #1\n")
++        self.assertIn("Linus T", cli.main(["accounts"], path))
+ 
+ 
+ if __name__ == "__main__":

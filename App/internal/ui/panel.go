@@ -52,6 +52,9 @@ func (m *model) panelItems() []panelItem {
 		items = append(items, panelItem{text: m.providerName + "/", id: spotServer, glue: true})
 	}
 	items = append(items, panelItem{text: m.modelName, id: spotModel}, panelItem{text: agent.FormatMeter(m.used, m.limit, m.est)})
+	if m.tokens > 0 { // before the spend (R-132)
+		items = append(items, panelItem{text: "Σ " + agent.FormatTokens(m.tokens) + " tok"})
+	}
 	if m.spend > 0 { // next to the meter (R-112)
 		items = append(items, panelItem{text: agent.FormatUSD(m.spend)})
 	}
@@ -96,7 +99,7 @@ func (m *model) panelLine() string {
 func (m *model) hotPanel(y int) {
 	for _, it := range m.panelItems() {
 		if it.id != "" {
-			m.hv.add(it.id, y, it.x0, it.x1)
+			m.hv.Add(it.id, y, it.x0, it.x1)
 		}
 	}
 }

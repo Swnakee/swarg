@@ -10,6 +10,7 @@ import (
 
 	"swarg/internal/agent"
 	"swarg/internal/chat"
+	"swarg/internal/ui/command"
 	"swarg/internal/ui/mdstream"
 )
 
@@ -25,16 +26,16 @@ func (r *rig) typeIn(s string) {
 }
 
 // names lists the command names of specs.
-func names(s []cmdSpec) []string {
+func names(s []command.Spec) []string {
 	out := make([]string, len(s))
 	for i, c := range s {
-		out[i] = c.name
+		out[i] = c.Name
 	}
 	return out
 }
 
 func TestSuggest_PrefixAndOrder(t *testing.T) {
-	if got := names(suggestions("/")); len(got) != len(commands) || got[0] != commands[0].name {
+	if got := names(suggestions("/")); len(got) != len(command.All()) || got[0] != command.All()[0].Name {
 		t.Errorf("/ suggests %v", got)
 	}
 	if got := names(suggestions("/re")); strings.Join(got, " ") != "/resume /rename" {
@@ -135,8 +136,8 @@ func TestSuggest_AllShownAndRoomGivesWay(t *testing.T) {
 			n++
 		}
 	}
-	if n != len(commands) {
-		t.Errorf("%d suggestion rows, want all %d", n, len(commands))
+	if n != len(command.All()) {
+		t.Errorf("%d suggestion rows, want all %d", n, len(command.All()))
 	}
 	for _, h := range []int{8, 6, 5} {
 		r.send(tea.WindowSizeMsg{Width: 60, Height: h})
@@ -161,8 +162,8 @@ func TestSuggest_OnlyVisibleRowsSelectable(t *testing.T) {
 		r.send(key(tea.KeyDown, 0))
 	}
 	r.send(key(tea.KeyTab, 0))
-	if v := r.m.ta.Value(); v != shown[2].name {
-		t.Errorf("Tab completed %q, want the third visible row %q", v, shown[2].name)
+	if v := r.m.ta.Value(); v != shown[2].Name {
+		t.Errorf("Tab completed %q, want the third visible row %q", v, shown[2].Name)
 	}
 }
 

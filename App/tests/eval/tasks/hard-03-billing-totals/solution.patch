@@ -1,0 +1,76 @@
+diff -ruN a/RULES.md ref/RULES.md
+--- a/RULES.md	2026-11-01 03:34:46
++++ ref/RULES.md	2026-11-01 03:34:35
+@@ -13,7 +13,7 @@
+    attributed to taxable lines = discount * taxable_subtotal / subtotal, rounded. Tax base =
+    taxable_subtotal - that attributed discount. Tax = base * region rate, rounded ONCE per invoice
+    (not per line). An unknown region is an error (ValueError).
+-6. Shipping is 7.50, waived (0.00) when subtotal - discount >= 100.00. Shipping is not taxed.
++6. Shipping is 7.50, waived (0.00) when subtotal - discount >= 50.00. Shipping is not taxed.
+ 7. Total = subtotal - discount + tax + shipping.
+ 8. An order with no lines (or subtotal 0) has all amounts 0.00, including shipping.
+ 9. The customer report sums invoice totals per customer_id (names can differ in case/spelling
+diff -ruN a/billing/discount.py ref/billing/discount.py
+--- a/billing/discount.py	2026-11-01 03:34:46
++++ ref/billing/discount.py	2026-11-01 03:34:35
+@@ -9,7 +9,7 @@
+ 
+ def volume_percent(sub):
+     for threshold, pct in TIERS:
+-        if sub > threshold:
++        if sub >= threshold:
+             return pct
+     return 0
+ 
+@@ -18,4 +18,4 @@
+     pct = volume_percent(sub)
+     if order.loyalty:
+         pct += LOYALTY_POINTS
+-    return money(sub * pct / 100)
++    return money(sub * min(pct, MAX_PERCENT) / 100)
+diff -ruN a/billing/report.py ref/billing/report.py
+--- a/billing/report.py	2026-11-01 03:34:46
++++ ref/billing/report.py	2026-11-01 03:34:35
+@@ -7,6 +7,6 @@
+     """Return [(customer, total)] sorted by total descending."""
+     totals = {}
+     for o in orders:
+-        key = o.customer_name
++        key = o.customer_id
+         totals[key] = totals.get(key, Decimal("0.00")) + build_invoice(o).total
+-    return sorted(totals.items(), key=lambda kv: -kv[1])
++    return sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))
+diff -ruN a/billing/rounding.py ref/billing/rounding.py
+--- a/billing/rounding.py	2026-11-01 03:34:46
++++ ref/billing/rounding.py	2026-11-01 03:34:35
+@@ -1,6 +1,6 @@
+-from decimal import Decimal
++from decimal import ROUND_HALF_UP, Decimal
+ 
+ 
+ def money(x):
+-    """Round to cents."""
+-    return Decimal(str(round(float(x), 2))).quantize(Decimal("0.01"))
++    """Round to cents, half up."""
++    return Decimal(x).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+diff -ruN a/billing/shipping.py ref/billing/shipping.py
+--- a/billing/shipping.py	2026-11-01 03:34:46
++++ ref/billing/shipping.py	2026-11-01 03:34:46
+@@ -5,6 +5,6 @@
+ 
+ 
+ def shipping_for(sub, discount):
+-    if sub >= FREE_FROM:
++    if sub - discount >= FREE_FROM:
+         return Decimal("0.00")
+     return FLAT
+diff -ruN a/billing/tax.py ref/billing/tax.py
+--- a/billing/tax.py	2026-11-01 03:34:46
++++ ref/billing/tax.py	2026-11-01 03:34:35
+@@ -13,4 +13,5 @@
+ 
+ def tax_for(order, taxable_sub, discount, sub):
+     rate = rate_for(order.region)
+-    return money(taxable_sub * rate)
++    base = taxable_sub - money(discount * taxable_sub / sub)
++    return money(base * rate)

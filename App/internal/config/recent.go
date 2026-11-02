@@ -68,12 +68,5 @@ func (r *Recent) Use(provider, id string) error {
 		list = list[:recentCap]
 	}
 	r.m.Models[provider] = list
-	out, err := json.MarshalIndent(r.m, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(r.path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(r.path, append(out, '\n'), 0o600)
+	return writeJSON(r.path, r.m)
 }

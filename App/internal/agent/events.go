@@ -55,6 +55,7 @@ type Event struct {
 	HasCache    bool              // Meter: CachePct is known (a usage report has been seen)
 	Breakdown   Breakdown         // Meter: estimated tokens of the next request by category
 	Spend       float64           // Spend: the Session spend in USD
+	Tokens      int               // Spend: the Session tokens used (prompt + completion, R-131)
 	Queued      int               // Queue: items waiting (not counting the running one)
 	Spans       int               // CompactStarted: WorkSpans to look at; Compacted: WorkSpans replaced
 	Before      int               // CompactStarted, Compacted: estimated tokens of the next request before the Compaction

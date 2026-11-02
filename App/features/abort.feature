@@ -2,7 +2,7 @@ Feature: Abort
 
   Rule: The first interrupt is soft
 
-    @S-067
+    @S-067 @R-6
     Scenario: A soft interrupt cancels a running Tool
       Given a Provider that calls a blocked Tool
       And the user submitted "go" and the Tool is running

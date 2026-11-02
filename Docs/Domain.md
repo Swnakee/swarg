@@ -31,11 +31,12 @@ A new domain term is added here before it appears in code, scenarios or docs.
 | Key | An API key or token kept in the Keys file under an upper-case name (the `api_key_env` of a provider, a `$VAR` of an MCP header or env); the environment variable of the same name wins (R-105, R-107) | secret, credential, token file | `KeyStore.Lookup`, `ui.KeyRow` |
 | Cloud notice | The one-time notice per project shown at the first switch to a Source that is not local (R-104) | privacy warning, consent | `Approvals.Notice`, `config.Provider.Local` |
 | Spend | The money a Session has cost so far in USD: the sum of the costs the server reported per response (OpenRouter `usage.cost`), kept per model id and in the SessionFile; a local server adds 0 (R-111) | bill, budget, balance | `agent.Spend`, `Agent.Spend`, `EvSpend` |
+| Session usage | The tokens a Session's requests have used so far: prompt, cached (the part of the prompt served from the server cache) and completion, summed over every request (Turn steps, Tasks, Agents, Compaction summaries); the panel shows prompt + completion as `Σ 12.4k tok` | session cost, context fill (that is the meter) | `agent.Tokens` |
 | Warning level | The optional `cost.warn_usd`: the Spend at which the user is warned once; it never stops anything (R-114, I-39) | spend limit, budget cap | `config.Cost.WarnUSD`, `Deps.WarnUSD` |
 | StreamEvent | One event of a streamed completion: text, prefill progress, usage, or the final done | chunk, token | `chat.StreamEvent` |
 | SystemPrompt | The first message of every request, assembled from Blocks | preamble, instructions | `prompt.Set.Build` |
 | Block | One switchable piece of the SystemPrompt (base, global `NN-name.md`, project `SWARG.md`, env, tool blocks); a `<name>.md` override file replaces a built-in one (R-49) | snippet, section, part | `prompt.Block` |
-| Prompt Profile | How much instruction text the SystemPrompt carries: `compact` (the base Block alone), `standard` (+ the standard layer), `full` (+ the full layer); cumulative, chosen by the config or by the user (R-115, R-116) | mode, level, preset | `prompt.Profile` |
+| Prompt Profile | How much instruction text the SystemPrompt carries: `low` (the base Block alone), `medium` (+ the medium layer), `high` (+ the high layer); cumulative, chosen by the config or by the user (R-115, R-116, R-134) | mode, level, preset | `prompt.Profile` |
 | Agent | A helper run for one job: a child conversation with its own history, Source (server and model), system prompt, tool allowlist and step limit; several run at once; hands back one AgentResult (R-120, R-122); not a Task (a Task shares the Session's Source and runs alone) | sub-agent run, worker, subtask | `agent.runAgent`, `conversation.agent` |
 | Agent type | A named kind of Agent: name, one-line description, server, model, profile, tools, max steps and a body of instructions; from a markdown file or built in (`general`, `explore`, `plan`, `review`) (R-121) | role, persona, mode | `agents.Type`, `agent.AgentType` |
 | Slot | Permission to run one Agent request: one per Source (`providers.<p>.max_parallel`) and one of the (at most 4) overall; an Agent without a free Slot waits (R-122) | lane, permit | `slots` |
@@ -65,7 +66,7 @@ A new domain term is added here before it appears in code, scenarios or docs.
 | Trace | The debug log of everything the agent did (requests, replies, calls, timings), kept next to the SessionFile | log, debug dump | `trace.Writer` |
 | TurnStart | The user Message that starts a Turn | first message, prompt | `chat.Message.TurnStart` |
 | Injected Message | A user Message typed during a Turn and injected into the history at a Step | queued message, follow-up | `chat.Message.Injected` |
-| Loop guard | The agent check that stops a streamed answer when it starts repeating itself; the answer is stored cut before the repetition | repeat filter, anti-loop | `agent.loopGuard` |
+| Loop guard | The agent check that stops a streamed answer when it starts repeating itself; the answer is stored cut before the repetition | repeat filter, anti-loop | `guard.Loop` |
 | Name | The title the user gives a Session (`/rename`); stored in its SessionFile and shown in lists instead of the first user Message | title, label, alias | `session.Loaded.Name`, `session.Info.Name` |
 | Hover | The look a clickable element takes while the pointer is over it (underline); a pointer move changes nothing else | highlight, focus, mouse-over | `ui.hover`, `ui.hoverSpan` |
 | Hotspot | One clickable span of screen cells registered during a draw, with an id used to dispatch a click | region, button area, hit box | `ui.hotspot`, `hover.add` |
@@ -444,12 +445,21 @@ Rules are numbered `R-n`; each one gets BDD scenarios (normal, boundary, failure
   sharing a word (3+ letters, split on `_`/`-`, `mcp` ignored) with it: `unknown tool save_tool;
   did you mean mcp__demo__save?` (at most three). T8 eval: the 9B called `save_tool` for an MCP tool.
 
-- R-115 The SystemPrompt has three Prompt Profiles, cumulative: `compact` is the base Block alone (byte-identical
-  to the prompt before T13), `standard` adds the standard layer, `full` adds the full layer on top of
+- R-131 Session usage: the tokens of each response (`usage` prompt, cached, completion; zero or missing
+  reports add nothing) are added to the Session usage over every request, Task, Agent and Compaction
+  summary request included, whether or not the response has a cost. They go through the same path as the
+  Spend. Every non-zero report is a `usage` line (`{"usage":{"in","cached","out"}}`) in the SessionFile;
+  resuming or opening a Session restores the totals, and a file without usage lines restores zero (T13).
+- R-132 The Bottom panel shows the Session usage as `Σ 12.4k tok` (prompt + completion; plain digits
+  below 1000, `k` below a million, then `M`), only while it is above 0, right before the Spend item (T13).
+- R-133 `/cost` also prints the usage totals line `tokens: 12.4k (in 11.9k, cached 8k, out 500)` under
+  the Session spend; nothing is printed while no tokens were used (T13).
+- R-115 The SystemPrompt has three Prompt Profiles, cumulative: `low` is the base Block alone (byte-identical
+  to the prompt before T13), `medium` adds the medium layer, `high` adds the high layer on top of
   it. The layers are Blocks between the base and the tool Blocks; a layer is in the Set (`/blocks`,
   `List`) only while its Profile is in force. A Profile change applies from the next request (T13 B).
 - R-116 The Profile a Session starts with: the most specific `prompt.profiles` model pattern that matches
-  the model (longest pattern), else `providers.<p>.profile`, else `prompt.profile`, else `compact`. It
+  the model (longest pattern), else `providers.<p>.profile`, else `prompt.profile`, else `low`. It
   follows a Model or Source change until the user chooses a Profile or a resumed Session carries one. An
   unknown name in the config is a config error naming the known ones (T13 B).
 - R-117 `/prompt` shows the Profiles with their size and marks the one in force; `/prompt <name>` (or
@@ -460,10 +470,19 @@ Rules are numbered `R-n`; each one gets BDD scenarios (normal, boundary, failure
   wins) and holds for the Session: a resumed Session, or one opened in the app, continues with it
   instead of the config's Profile; a Session without the record leaves the Profile to the config
   (T13 B).
-- R-119 A file `profile-standard.md`, `profile-full.md` or `subagents.md` in the blocks folder replaces
+- R-119 A file `profile-medium.md`, `profile-high.md` or `subagents.md` in the blocks folder replaces
   that layer's text (like R-49; the warning is printed at load). `subagents` is the sub-agent policy
-  layer: filled by main with the enabled agent types (R-123; empty when none), on in `standard` and `full` only, and an empty layer leaves
+  layer: filled by main with the enabled agent types (R-123; empty when none), on in `medium` and `high` only, and an empty layer leaves
   no gap in the SystemPrompt (T13 B).
+- R-134 The Profiles were renamed `compact` -> `low`, `standard` -> `medium`, `full` -> `high` (2026-11-01). The
+  old names still work wherever a name comes from outside: a config file (`prompt.profile`, `prompt.profiles`,
+  `providers.<p>.profile`), an agent type file, a SessionFile written earlier, `/prompt <old name>`, and the old
+  override files `profile-standard.md`, `profile-full.md` (the new file name wins). An old name is read as its new
+  one; swarg shows, records and writes only the new names. An unknown name is still refused with the known (new) ones.
+- R-135 The project rules file is the first of `SWARG.md`, `AGENTS.md`, `CLAUDE.md` found in the working directory
+  (never a parent or child folder); the others are ignored, nothing stacks. No file means no project Block (S-744..S-746, S-749).
+- R-136 The env block has a line `Git repo: yes|no`: yes when the working directory or a parent folder holds a `.git`
+  entry (directory, or file in a linked work tree); git is not run (S-747, S-748).
 
 - R-120 An Agent starts with an empty history and only the goal (framed as a job of the main agent); it
   uses the Source and model of its type (`server`, `model`; empty or `inherit` = the Session's), the
@@ -484,8 +503,8 @@ Rules are numbered `R-n`; each one gets BDD scenarios (normal, boundary, failure
   and a wait ends with Esc. Agents are not on the Chain: Interrupt and Abort walk the running Agents too
   (T13 C).
 - R-123 The `agent` Tool is offered only to the Session (never inside an Agent or a Task) and only while
-  agent types are on offer. Under the `compact` Profile none are, so compact never offers or describes it
-  (I-40); `standard` and `full` fill the `subagents` layer with the enabled types and the rules for
+  agent types are on offer. Under the `low` Profile none are, so low never offers or describes it
+  (I-40); `medium` and `high` fill the `subagents` layer with the enabled types and the rules for
   delegating, and a switch in `/agents` rewrites it (T13 C).
 - R-124 Two Agents never write one file at the same time: the Run of a call that changes a file holds a
   lock on its path; a second simultaneous call on that path is an error ToolResult naming the holder, and
@@ -512,8 +531,8 @@ Rules are numbered `R-n`; each one gets BDD scenarios (normal, boundary, failure
   path; for a type that already has a file it reports that file. A changed, added or removed agent file
   applies without a restart: the folders are re-read when `/agents` is opened, after `new` / `edit`, and
   at the next agent request (the `subagents` prompt layer is rewritten). Which types are off is kept.
-  Each Source has a default prompt Profile: the `openrouter` preset is `standard` (eval B4:
-  compact 15/16, standard 16/16, full 14/16), local presets stay `compact` (T13 global agents).
+  Each Source has a default prompt Profile: the `openrouter` preset is `medium` (eval B4:
+  low 15/16, medium 16/16, high 14/16), local presets stay `low` (T13 global agents).
 
 ## Invariants
 
@@ -574,7 +593,7 @@ Invariants are numbered `I-n`; each one is a test target.
 - I-15 A model-chosen URL never makes a request to a private address: the check runs on the address
   that is dialed, for every redirect hop (T4 tools).
 
-- I-40 The `compact` SystemPrompt never changes with a Profile: no layer text, no sub-agent policy and
+- I-40 The `low` SystemPrompt never changes with a Profile: no layer text, no sub-agent policy and
   no Block or Profile name ever reaches it (and no internal name reaches any Profile) (T13 B).
 
 - I-41 An Agent has no `agent` and no `task` Tool: Agents never nest (T13 C).

@@ -25,6 +25,7 @@ type storeOp struct {
 	model string  // model: the chosen id
 	on    bool    // thinking: the new mode
 	usd   float64 // spend: the cost of one response
+	tok   Tokens  // usage: the tokens of one response
 	from  int     // compact: first Seq replaced
 	to    int     // compact: last Seq replaced
 	msg   chat.Message
@@ -69,6 +70,10 @@ func (f *fakeStore) Model(name string) error        { return f.add(storeOp{kind:
 func (f *fakeStore) Provider(name string) error     { return f.add(storeOp{kind: "provider", model: name}) }
 func (f *fakeStore) Spend(model string, usd float64) error {
 	return f.add(storeOp{kind: "spend", model: model, usd: usd})
+}
+
+func (f *fakeStore) Usage(prompt, cached, completion int) error {
+	return f.add(storeOp{kind: "usage", tok: Tokens{Prompt: prompt, Cached: cached, Completion: completion}})
 }
 
 func (f *fakeStore) all() []storeOp {

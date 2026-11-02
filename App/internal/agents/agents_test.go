@@ -71,13 +71,13 @@ func TestLoad_BuiltinsPresentAndEnabled(t *testing.T) {
 
 func TestLoad_GlobalFileLoaded(t *testing.T) {
 	g := t.TempDir()
-	p := writeFile(t, g, "docs.md", "---\ndescription: Writes docs\nserver: other\nmodel: m1\nprofile: full\ntools: read_file, grep,,\nmax_steps: 7\nunknown: x\n---\r\nDo the docs.\r\n")
+	p := writeFile(t, g, "docs.md", "---\ndescription: Writes docs\nserver: other\nmodel: m1\nprofile: high\ntools: read_file, grep,,\nmax_steps: 7\nunknown: x\n---\r\nDo the docs.\r\n")
 	s, ws := Load(g, t.TempDir(), nil)
 	if len(ws) != 0 {
 		t.Fatalf("warnings: %v", ws)
 	}
 	ty := mustGet(t, s, "docs")
-	want := Type{Name: "docs", Description: "Writes docs", Server: "other", Model: "m1", Profile: "full",
+	want := Type{Name: "docs", Description: "Writes docs", Server: "other", Model: "m1", Profile: "high",
 		Tools: []string{"read_file", "grep"}, MaxSteps: 7, Body: "Do the docs.", Source: SourceGlobal, Path: p, Enabled: true}
 	if !reflect.DeepEqual(ty, want) {
 		t.Errorf("got %+v\nwant %+v", ty, want)
@@ -150,6 +150,22 @@ func TestLoad_ProfileInheritAndEmptyAccepted(t *testing.T) {
 	}
 	if mustGet(t, s, "a").Profile != "inherit" || mustGet(t, s, "b").Profile != "" {
 		t.Error("profile values changed")
+	}
+}
+
+func TestLoad_OldProfileNamesAreReadAsTheNewOnes(t *testing.T) { // R-134
+	g := t.TempDir()
+	writeFile(t, g, "a.md", "---\ndescription: d\nprofile: compact\n---\n")
+	writeFile(t, g, "b.md", "---\ndescription: d\nprofile: standard\n---\n")
+	writeFile(t, g, "c.md", "---\ndescription: d\nprofile: full\n---\n")
+	s, ws := Load(g, t.TempDir(), nil)
+	if len(ws) != 0 {
+		t.Fatalf("warnings: %v", ws)
+	}
+	for name, want := range map[string]string{"a": "low", "b": "medium", "c": "high"} {
+		if got := mustGet(t, s, name).Profile; got != want {
+			t.Errorf("type %s: profile %q, want %q", name, got, want)
+		}
 	}
 }
 

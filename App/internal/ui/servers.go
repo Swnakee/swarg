@@ -2,6 +2,7 @@ package ui
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"swarg/internal/ui/menu"
 )
 
 // ---------------------------------------------------------------------------
@@ -46,25 +47,18 @@ func (m *model) onServers(msg serversMsg) {
 }
 
 // serverMenu lists the Sources: `name  type  address  state`, the active one marked; Enter switches.
-func (m *model) serverMenu(rows []ServerRow) *menu {
+func (m *model) serverMenu(rows []ServerRow) *menu.Menu {
 	cells := make([][]string, len(rows))
 	for i, r := range rows {
-		mark := " "
-		if r.Active {
-			mark = glyphAuto
-		}
-		cells[i] = []string{"  " + mark + " " + Clean(r.Name), r.Type, Clean(r.Address), Clean(r.State)}
+		cells[i] = []string{"  " + pickMark(r.Active, glyphAuto, " ") + " " + Clean(r.Name), r.Type, Clean(r.Address), Clean(r.State)}
 	}
-	items := make([]menuRow, len(rows))
-	for i, t := range columns(cells) {
-		items[i] = menuRow{ID: rows[i].Name, Text: t, Match: rows[i].Name}
-	}
-	mn := newMenu("Model sources ("+glyphAuto+" = in use)", items)
-	mn.onChoose = func(id string) bool {
+	items := columnRows(cells, func(i int) menu.Row { return menu.Row{ID: rows[i].Name, Match: rows[i].Name} })
+	o := menuOpts("Model sources ("+glyphAuto+" = in use)", items)
+	o.OnChoose = func(id string) bool {
 		m.switchServer(id)
 		return true
 	}
-	return mn
+	return menu.New(o)
 }
 
 // switchServer makes name the Source from the next request on and reports it (with the one-time

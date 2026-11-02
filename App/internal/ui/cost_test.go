@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"swarg/internal/agent"
+	"swarg/internal/ui/command"
 )
 
 // ---------------------------------------------------------------------------
@@ -110,7 +111,60 @@ func TestCost_KeyQueryFailureKeepsSessionPartAndLeaksNothing(t *testing.T) {
 }
 
 func TestCost_ListedInHelp(t *testing.T) {
-	if !strings.Contains(helpText(), "/cost") {
+	if !strings.Contains(command.Help(), "/cost") {
 		t.Error("/cost is not in /help")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Session tokens in the panel (R-132) and /cost (R-133)
+// ---------------------------------------------------------------------------
+
+type tokenAgent struct {
+	*fakeAgent
+	tk agent.Tokens
+}
+
+func (a *tokenAgent) Tokens() agent.Tokens { return a.tk }
+
+func TestPanel_TokensShownBeforeSpendOnlyWhenPositive(t *testing.T) {
+	r := newRig(t)
+	if strings.Contains(r.panelText(), "Σ") {
+		t.Fatalf("no tokens yet, panel %q", r.panelText())
+	}
+	r.events(agent.Event{Kind: agent.EvSpend, Spend: 0.0012, Tokens: 12400})
+	p := r.panelText()
+	i := strings.Index(p, "Σ 12.4k tok")
+	if i < 0 {
+		t.Fatalf("panel %q lacks the tokens", p)
+	}
+	if i < strings.Index(p, "16k") || i > strings.Index(p, "$0.0012") {
+		t.Errorf("tokens are not between the meter and the spend: %q", p)
+	}
+	r.events(agent.Event{Kind: agent.EvSpend, Tokens: 2_500_000})
+	if p := r.panelText(); !strings.Contains(p, "Σ 2.5M tok") || strings.Contains(p, "$") {
+		t.Errorf("tokens without cost: %q", p)
+	}
+	r.events(agent.Event{Kind: agent.EvSpend})
+	if strings.Contains(r.panelText(), "Σ") {
+		t.Errorf("zero tokens must hide the item: %q", r.panelText())
+	}
+}
+
+func TestCost_PrintsTokenTotals(t *testing.T) {
+	r := newRig(t)
+	r.m.d.Agent = &tokenAgent{fakeAgent: r.ag, tk: agent.Tokens{Prompt: 11900, Cached: 8000, Completion: 500}}
+	r.cmd("/cost")
+	if c := r.convText(); !strings.Contains(c, "tokens: 12.4k (in 11.9k, cached 8k, out 500)") {
+		t.Errorf("%q", c)
+	}
+}
+
+func TestCost_NoTokensNoLine(t *testing.T) {
+	r := newRig(t)
+	r.m.d.Agent = &tokenAgent{fakeAgent: r.ag}
+	r.cmd("/cost")
+	if c := r.convText(); strings.Contains(c, "tokens:") {
+		t.Errorf("%q", c)
 	}
 }

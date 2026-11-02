@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"swarg/internal/agent/guard"
 	"swarg/internal/chat"
 )
 
@@ -140,6 +141,7 @@ func (a *Agent) prepare(r *turnResult) {
 	for _, c := range r.raw {
 		p := pendingCall{raw: c.Args}
 		a.mu.Lock() // agents prepare their calls at the same time as the Session's other loops
+		c.Name = normalizeName(c.Name)
 		c.Args, p.bad = normalizeArgs(c.Args)
 		if r.finish == chat.FinishLength || r.looped { // the request was cut, so may be its calls
 			p.bad = errCut
@@ -153,6 +155,16 @@ func (a *Agent) prepare(r *turnResult) {
 		p.call = c
 		r.calls = append(r.calls, p)
 	}
+}
+
+// normalizeName returns the tool name without leaked format tokens: gpt-oss through some
+// servers sends `edit_file<|channel|>commentary`. A name that starts with a token is kept.
+func normalizeName(name string) string {
+	name = strings.TrimSpace(name)
+	if i := strings.Index(name, "<|"); i > 0 {
+		return strings.TrimSpace(name[:i])
+	}
+	return name
 }
 
 // normalizeArgs returns valid JSON-object arguments: blank or null become {},
@@ -195,7 +207,7 @@ func storedCalls(ps []pendingCall) []chat.ToolCall {
 // runCalls runs the calls of c by schedule (consecutive read-only calls in parallel,
 // every other call alone, in order) and appends one tool message per call.
 // The repeat guard g may add a note to a ToolResult; stop reports that the loop must end.
-func (a *Agent) runCalls(c *conversation, calls []pendingCall, g *repeatGuard) (denied int, stop bool) {
+func (a *Agent) runCalls(c *conversation, calls []pendingCall, g *guard.Repeat) (denied int, stop bool) {
 	res := make([]result, len(calls))
 	for i := 0; i < len(calls); {
 		j := i + 1
@@ -208,12 +220,12 @@ func (a *Agent) runCalls(c *conversation, calls []pendingCall, g *repeatGuard) (
 		i = j
 	}
 	a.mu.Lock()
-	g.newStep()
+	g.NewStep()
 	for i, p := range calls {
 		if res[i].denied {
 			denied++
 		}
-		note, st := g.observe(p, res[i])
+		note, st := g.Observe(guard.Call{Name: p.call.Name, Args: p.call.Args}, guard.Outcome{Output: res[i].output, Err: res[i].err, Denied: res[i].denied})
 		res[i].output += note
 		stop = stop || st
 		a.appendLocked(c, chat.Message{Role: chat.RoleTool, Content: res[i].output, ToolCallID: p.call.ID, Name: p.call.Name,

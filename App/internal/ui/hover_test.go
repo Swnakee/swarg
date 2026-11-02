@@ -3,10 +3,10 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"swarg/internal/ui/hover"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // ---------------------------------------------------------------------------
@@ -25,72 +25,11 @@ func (r *rig) rawRows() []string { return strings.Split(r.m.View().Content, "\n"
 func underlined(rows []string) []int {
 	var out []int
 	for i, row := range rows {
-		if strings.Contains(row, underlineOn) {
+		if strings.Contains(row, hover.UnderlineOn) {
 			out = append(out, i)
 		}
 	}
 	return out
-}
-
-// ---------------------------------------------------------------------------
-// The hover struct
-// ---------------------------------------------------------------------------
-
-func TestHover_AddReportsPointerAndAtFindsTheLastSpot(t *testing.T) {
-	var h hover
-	if h.add("a", 0, 0, 5) {
-		t.Error("over before any pointer position")
-	}
-	h.move(3, 0)
-	h.begin()
-	if !h.add("a", 0, 0, 5) {
-		t.Error("add must report the pointer over the span")
-	}
-	if h.add("b", 0, 5, 9) || h.add("c", 1, 0, 5) {
-		t.Error("spans beside or below the pointer reported as hovered")
-	}
-	if h.add("empty", 0, 3, 3) {
-		t.Error("an empty span registered")
-	}
-	h.add("top", 0, 2, 4) // overlaps "a": the last registered wins
-	if id, ok := h.at(3, 0); !ok || id != "top" {
-		t.Errorf("at(3,0) = %q %v, want top", id, ok)
-	}
-	if id, ok := h.at(0, 0); !ok || id != "a" {
-		t.Errorf("at(0,0) = %q %v, want a", id, ok)
-	}
-	if _, ok := h.at(7, 1); ok {
-		t.Error("at found a spot where none is")
-	}
-	h.begin()
-	if _, ok := h.at(3, 0); ok {
-		t.Error("begin must forget the spots")
-	}
-}
-
-func TestHoverSpan_KeepsColoursAndTrailingPadding(t *testing.T) {
-	row := "\x1b[31mabc\x1b[m def   "
-	got := hoverSpan(row, 0, toEnd)
-	if ansi.Strip(got) != ansi.Strip(row) {
-		t.Fatalf("text changed: %q", ansi.Strip(got))
-	}
-	_, tail, _ := strings.Cut(got, underlineOff)
-	if ansi.Strip(tail) != "   " || strings.Contains(tail, underlineOn) {
-		t.Errorf("trailing padding must stay outside the underline: %q", got)
-	}
-	if !strings.Contains(got, "\x1b[31m") {
-		t.Errorf("the colour was lost: %q", got)
-	}
-	if strings.Count(got, underlineOn) < 2 {
-		t.Errorf("a reset inside the span must be followed by a fresh underline: %q", got)
-	}
-	if hoverSpan("abc", 5, 9) != "abc" {
-		t.Error("a span past the text must leave the row alone")
-	}
-	part := hoverSpan("abcdef", 2, 4)
-	if part != "ab"+underlineOn+"cd"+underlineOff+"ef" {
-		t.Errorf("partial span: %q", part)
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +149,7 @@ func TestHover_SpotsFollowTheScroll(t *testing.T) {
 	if got := underlined(r.rawRows()); len(got) != 1 || got[0] != y {
 		t.Fatalf("underlined rows %v, want [%d]", got, y)
 	}
-	id, ok := r.m.hv.at(3, y)
+	id, ok := r.m.hv.At(3, y)
 	if !ok || !strings.HasPrefix(id, "tool:") {
 		t.Errorf("spot under the pointer = %q %v", id, ok)
 	}
@@ -246,14 +185,14 @@ func TestHover_PickerRowUnderlined(t *testing.T) {
 	if got := underlined(rows()); len(got) != 1 || got[0] != 1 {
 		t.Fatalf("the selected row must show the hover too: %v", got)
 	}
-	if id, ok := p.hv.at(4, 1); !ok || id != "row:c3" {
+	if id, ok := p.SpotAt(4, 1); !ok || id != "row:c3" {
 		t.Errorf("spot = %q %v, want row:c3", id, ok)
 	}
 	drive(p, tea.MouseMotionMsg{X: 4, Y: 0, Button: tea.MouseNone})
 	if got := underlined(rows()); len(got) != 0 {
 		t.Fatalf("the header is not clickable: %v", got)
 	}
-	if fmt.Sprint(p.cur) != "0" {
-		t.Errorf("motion moved the cursor to %d", p.cur)
+	if fmt.Sprint(p.Cursor()) != "0" {
+		t.Errorf("motion moved the cursor to %d", p.Cursor())
 	}
 }

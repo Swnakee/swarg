@@ -1,0 +1,2 @@
+Write a migration script that cleans a messy customer CSV into a strict JSON schema and reports rejected rows.
+We are moving our old customer export (legacy_customers.csv here is a small sample; the real one has 100k rows and the same quirks) into the new system. SCHEMA.md has the target format and all the cleaning and rejection rules. Please write migrate.py that follows it exactly, usable as `python3 migrate.py legacy_customers.csv customers.json rejects.json`, run it on the sample, and tell me how many rows were accepted and rejected.

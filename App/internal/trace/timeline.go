@@ -6,7 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -185,13 +186,8 @@ func anyText(v any) string {
 
 // generic prints scalar fields as key=value (sorted) and sizes of the others.
 func generic(d map[string]any) string {
-	keys := make([]string, 0, len(d))
-	for k := range d {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
 	var parts []string
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(d)) {
 		switch v := d[k].(type) {
 		case string:
 			parts = append(parts, fmt.Sprintf("%s=%q", k, short(v, 100)))

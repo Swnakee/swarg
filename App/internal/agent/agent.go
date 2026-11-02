@@ -187,8 +187,13 @@ func (a *Agent) Submit(text string) {
 	if strings.TrimSpace(text) == "" {
 		return
 	}
+	a.enqueueText(qitem{text: text})
+}
+
+// enqueueText queues a user text item and announces the new queue length.
+func (a *Agent) enqueueText(it qitem) {
 	a.mu.Lock()
-	a.queue = append(a.queue, qitem{text: text})
+	a.queue = append(a.queue, it)
 	n := a.queuedTextsLocked()
 	a.mu.Unlock()
 	a.emit(Event{Kind: EvQueue, Queued: n})

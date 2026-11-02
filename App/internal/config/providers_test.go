@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"swarg/internal/keys"
 )
 
 // ---------------------------------------------------------------------------
@@ -17,11 +19,13 @@ func TestDefaults_OpenRouterPreset(t *testing.T) {
 		t.Fatal("no openrouter preset")
 	}
 	if p.Type != "openrouter" || p.BaseURL != "https://openrouter.ai/api/v1" || p.APIKeyEnv != "OPENROUTER_API_KEY" ||
-		p.Model == "" || p.ContextLimit <= 0 || p.MaxTokens <= 0 {
+		p.Model == "" || p.ContextLimit <= 0 || p.MaxTokens < 0 {
 		t.Fatalf("preset %+v", p)
 	}
-	if len(p.ExtraBody) != 0 {
-		t.Errorf("extra_body must be empty (no local Qwen sampling), got %v", p.ExtraBody)
+	for k := range p.ExtraBody { // no local Qwen sampling; only the provider routing
+		if k != "provider" {
+			t.Errorf("extra_body has %q (no local Qwen sampling), got %v", k, p.ExtraBody)
+		}
 	}
 	tb := p.ThinkingBody()
 	r, _ := tb["reasoning"].(map[string]any)
@@ -150,5 +154,79 @@ func TestApprovals_NoticeOncePerProject(t *testing.T) {
 	}
 	if again.Approved("/p", "cloud", MCPServer{}) {
 		t.Fatal("a notice must not count as an MCP approval")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// API key lookup through the user keys file (R-105)
+// ---------------------------------------------------------------------------
+
+// isolateUserKeys points keys.User (and Dir) at a temp dir through the OS variables.
+func isolateUserKeys(t *testing.T) keys.Store {
+	t.Helper()
+	d := t.TempDir()
+	t.Setenv("HOME", d)
+	t.Setenv("XDG_CONFIG_HOME", d)
+	t.Setenv("AppData", d)
+	ks := keys.User()
+	if !strings.HasPrefix(ks.File, d) {
+		t.Fatalf("keys file %q is outside the temp dir", ks.File)
+	}
+	return ks
+}
+
+// writeFile writes body with exactly mode (the umask may have cut the bits).
+func writeFile(t *testing.T, path, body string, mode os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), mode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// R-105
+func TestAPIKey_FromEnvThenKeysFile(t *testing.T) {
+	ks := isolateUserKeys(t)
+	t.Setenv("T12_KEY_I", "")
+	p := Provider{APIKeyEnv: "T12_KEY_I"}
+	if p.APIKey() != "" {
+		t.Fatal("no key yet")
+	}
+	writeFile(t, ks.File, "T12_KEY_I=test-key-value-1\n", 0o600)
+	if got := p.APIKey(); got != "test-key-value-1" { // read on every call: no restart
+		t.Errorf("APIKey = %q", got)
+	}
+	writeFile(t, ks.File, "T12_KEY_I=test-key-value-2\n", 0o600)
+	if got := p.APIKey(); got != "test-key-value-2" {
+		t.Errorf("after an edit APIKey = %q", got)
+	}
+	t.Setenv("T12_KEY_I", "test-env-value")
+	if got := p.APIKey(); got != "test-env-value" {
+		t.Errorf("env must win, got %q", got)
+	}
+}
+
+func TestAPIKey_StillReadsTheOldKeysDir(t *testing.T) {
+	ks := isolateUserKeys(t)
+	t.Setenv("T12_KEY_J", "")
+	writeFile(t, filepath.Join(ks.OldDir, "T12_KEY_J"), "test-old-value\n", 0o600)
+	if got := (Provider{APIKeyEnv: "T12_KEY_J"}).APIKey(); got != "test-old-value" {
+		t.Errorf("APIKey = %q", got)
+	}
+}
+
+func TestNoKey_NamesTheVariableAndTheKeysFile(t *testing.T) {
+	ks := isolateUserKeys(t)
+	h := (Provider{APIKeyEnv: "T12_KEY_K"}).NoKey()
+	if !strings.Contains(h, "set T12_KEY_K") || !strings.Contains(h, ks.File) || !strings.Contains(h, "chmod 600") {
+		t.Errorf("NoKey = %q", h)
+	}
+	if h := (Provider{APIKeyEnv: "../x"}).NoKey(); strings.Contains(h, "keys.env") {
+		t.Errorf("a bad name gets no file hint: %q", h)
 	}
 }

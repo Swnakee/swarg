@@ -21,6 +21,7 @@ func writeTrace(t *testing.T, w *Writer) string {
 	return tp
 }
 
+// R-26
 func TestDelete_RemovesTheSessionAndItsTrace(t *testing.T) {
 	dir := t.TempDir()
 	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
@@ -74,6 +75,7 @@ func TestDelete_UnknownAndEmptyID(t *testing.T) {
 	}
 }
 
+// R-26
 func TestDelete_StaysInsideTheDir(t *testing.T) {
 	dir := t.TempDir()
 	mkSession(t, dir, time.Now(), "s", 1)

@@ -1,0 +1,2 @@
+Write a unit test suite strong enough to catch subtle bugs in a small utility module.
+textutil.py has five helpers and README.md documents exactly how each must behave, including the edge cases. The module is correct today, but we keep breaking it when we touch it and the tests don't notice. Please write tests/test_textutil.py (unittest, stdlib only) that covers the documented behaviour thoroughly, so that a small change that breaks any documented rule makes some test fail. Run your tests, they must pass on the current code. Don't change textutil.py.

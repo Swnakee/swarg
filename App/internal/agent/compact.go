@@ -39,15 +39,28 @@ func (a *Agent) Compact(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	return a.enqueueControl(qitem{compact: &compactItem{}})
+}
+
+// enqueueControl queues a Load or Compaction item; ErrStopped after the worker stopped.
+func (a *Agent) enqueueControl(it qitem) error {
 	a.mu.Lock()
 	if a.stopped {
 		a.mu.Unlock()
 		return ErrStopped
 	}
-	a.queue = append(a.queue, qitem{compact: &compactItem{}})
+	a.queue = append(a.queue, it)
 	a.mu.Unlock()
 	signal(a.wake)
 	return nil
+}
+
+// popControl drops the finished control item from the queue head and wakes Wait.
+func (a *Agent) popControl() {
+	a.mu.Lock()
+	a.queue = a.queue[1:]
+	a.idle.Broadcast()
+	a.mu.Unlock()
 }
 
 // enqueueAutoLocked puts an automatic Compaction at the head of the queue (before queued
@@ -136,10 +149,7 @@ func (a *Agent) runCompact(ctx context.Context, it *compactItem) {
 	if health := a.health(); aborted && health != nil {
 		go a.checkHealth(ctx, health)
 	}
-	a.mu.Lock()
-	a.queue = a.queue[1:] // only now: Busy and Wait cover the Store and Trace calls of the run
-	a.idle.Broadcast()
-	a.mu.Unlock()
+	a.popControl() // only now: Busy and Wait cover the Store and Trace calls of the run
 }
 
 // settleAutoLocked updates the circuit breaker after a run and returns the warning to show
@@ -212,12 +222,12 @@ func (a *Agent) compactOne(ctx context.Context, s span) (applied, failed bool, e
 	}
 	rep := map[string]any{"from_seq": s.fromSeq, "to_seq": s.toSeq, "tokens": s.tokens, "prompt": summaryPrompt,
 		"inputs": rec.inputs, "replies": rec.replies, "fallback": why != "" && why != "small", "why": why, "summary": text}
-	if !gainOK(text, s.tokens) {
-		rep["applied"], rep["gain"] = false, gainPercent(text, s.tokens)
+	applied = gainOK(text, s.tokens)
+	rep["applied"], rep["gain"] = applied, gainPercent(text, s.tokens)
+	if !applied {
 		a.trace("compact", rep)
 		return false, failed, err
 	}
-	rep["applied"], rep["gain"] = true, gainPercent(text, s.tokens)
 	return a.replaceSpan(s, text, rep), failed, err
 }
 

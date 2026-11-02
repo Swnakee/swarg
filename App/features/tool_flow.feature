@@ -2,25 +2,25 @@ Feature: Tool scheduling
 
   Rule: Read-only Tools run together, mutating Tools one at a time
 
-    @S-050
+    @S-050 @R-8
     Scenario: Read-only ToolCalls overlap
       Given a Provider that calls three read-only Tools in one answer
       When the user submits "read all"
       Then the three Tools were running at the same time
 
-    @S-051
+    @S-051 @R-8
     Scenario: Mutating ToolCalls never overlap
       Given a Provider that calls three mutating Tools in one answer
       When the user submits "change all"
       Then at most one Tool was running at any time
 
-    @S-052
+    @S-052 @R-8
     Scenario: Mutating ToolCalls run in call order
       Given a Provider that calls the mutating Tools "a", "b", "c" in one answer
       When the user submits "change all"
       Then the Tools finished in the order a, b, c
 
-    @S-053
+    @S-053 @R-8
     Scenario: ToolResults keep call order whatever finishes first
       Given a Provider that calls the read-only Tools "slow" and "fast" in one answer
       When the user submits "read both"
@@ -28,14 +28,14 @@ Feature: Tool scheduling
 
   Rule: Text sent during a Turn reaches the Provider at the next Step
 
-    @S-054
+    @S-054 @R-1
     Scenario: Text sent while a Tool runs is sent with its result
       Given a Provider that calls a blocked Tool and then answers "ok"
       And the user submitted "start" and the Tool is running
       When the user submits "also this"
       Then the second request ends with the ToolResult followed by the user Message "also this"
 
-    @S-055
+    @S-055 @R-6
     Scenario: A mutating ToolCall not yet started is skipped
       Given a Provider that calls the blocked mutating Tools "first" and "second" in one answer
       And the user submitted "go" and the Tool "first" is running
@@ -58,19 +58,19 @@ Feature: Tool scheduling
 
   Rule: A Turn ends after MaxSteps Steps
 
-    @S-058
+    @S-058 @R-12
     Scenario: The step limit ends the Turn with a warning
       Given the step limit is 2 and a Provider that always calls a Tool
       When the user submits "loop"
       Then a warning "step limit reached (2)" is shown
 
-    @S-059
+    @S-059 @R-12
     Scenario: A Turn within the step limit has no warning
       Given the step limit is 2 and a Provider that calls a Tool once and then answers "ok"
       When the user submits "once"
       Then no warning is shown
 
-    @S-060
+    @S-060 @R-6 @R-12
     Scenario: The history stays valid after the step limit
       Given the step limit is 2 and a Provider that always calls a Tool
       When the user submits "loop"

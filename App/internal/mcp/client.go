@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -198,12 +200,7 @@ func (c *Client) wire(s *server, list []wireTool) []tool {
 		delete(allow, w.Name)
 	}
 	if len(allow) > 0 {
-		missing := make([]string, 0, len(allow))
-		for n := range allow {
-			missing = append(missing, n)
-		}
-		sort.Strings(missing)
-		s.reason = "tools not offered by the server: " + strings.Join(missing, ", ")
+		s.reason = "tools not offered by the server: " + strings.Join(slices.Sorted(maps.Keys(allow)), ", ")
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
 	return out
@@ -345,20 +342,13 @@ func (c *Client) Kind(name string) (known, readOnly, confirm bool) {
 
 // Label is the one-line description of a call, like a built-in Tool's Summary: the first string
 // argument (the UI shows `mcp__demo__lookup(A-100)` from it; T8 eval showed the doubled name).
-func (c *Client) Label(_, args string) string { return Summary(args) }
-
-// Summary is the first string argument (key order), clipped; "" for none or bad JSON.
-func Summary(args string) string {
+// The argument is the first string one in key order, clipped; "" for none or bad JSON.
+func (c *Client) Label(_, args string) string {
 	var m map[string]any
 	if json.Unmarshal([]byte(args), &m) != nil {
 		return ""
 	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(m)) {
 		if s, ok := m[k].(string); ok && s != "" {
 			return tools.ClipRunes(s, labelCut)
 		}

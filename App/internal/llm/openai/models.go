@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -71,7 +72,7 @@ func (c *Client) Catalog(ctx context.Context) ([]ModelInfo, error) {
 		m.Tools, m.Reasoning = slices.Contains(d.Parameters, "tools"), slices.Contains(d.Parameters, "reasoning")
 		out = append(out, m)
 	}
-	slices.SortFunc(out, func(a, b ModelInfo) int { return cmpString(a.ID, b.ID) })
+	slices.SortFunc(out, func(a, b ModelInfo) int { return cmp.Compare(a.ID, b.ID) })
 	return slices.CompactFunc(out, func(a, b ModelInfo) bool { return a.ID == b.ID }), nil
 }
 
@@ -88,16 +89,6 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
-func cmpString(a, b string) int {
-	switch {
-	case a < b:
-		return -1
-	case a > b:
-		return 1
-	}
-	return 0
-}
-
 // ---------------------------------------------------------------------------
 // Key info (GET /key, OpenRouter, R-113)
 // ---------------------------------------------------------------------------
@@ -105,10 +96,13 @@ func cmpString(a, b string) int {
 // KeyInfo is what OpenRouter reports about the API key in use, in USD. Limit and Remaining are
 // nil for a key without a limit. The key itself is never part of it (I-39).
 type KeyInfo struct {
-	Label                  string
-	Limit, Remaining       *float64
-	Usage                  float64
-	Daily, Weekly, Monthly float64
+	Label     string   `json:"label"`
+	Limit     *float64 `json:"limit"`
+	Remaining *float64 `json:"limit_remaining"`
+	Usage     float64  `json:"usage"`
+	Daily     float64  `json:"usage_daily"`
+	Weekly    float64  `json:"usage_weekly"`
+	Monthly   float64  `json:"usage_monthly"`
 }
 
 // KeyInfo asks the server about the key in use: GET {base}/key. A server without the endpoint
@@ -122,20 +116,10 @@ func (c *Client) KeyInfo(ctx context.Context) (KeyInfo, error) {
 	}
 	defer resp.Body.Close()
 	var w struct {
-		Data struct {
-			Label     string   `json:"label"`
-			Limit     *float64 `json:"limit"`
-			Remaining *float64 `json:"limit_remaining"`
-			Usage     float64  `json:"usage"`
-			Daily     float64  `json:"usage_daily"`
-			Weekly    float64  `json:"usage_weekly"`
-			Monthly   float64  `json:"usage_monthly"`
-		} `json:"data"`
+		Data KeyInfo `json:"data"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&w); err != nil {
 		return KeyInfo{}, fmt.Errorf("key info from %s: %w", c.baseURL, err)
 	}
-	d := w.Data
-	return KeyInfo{Label: d.Label, Limit: d.Limit, Remaining: d.Remaining, Usage: d.Usage,
-		Daily: d.Daily, Weekly: d.Weekly, Monthly: d.Monthly}, nil
+	return w.Data, nil
 }

@@ -24,6 +24,12 @@ func registerBlocksSteps(sc *godog.ScenarioContext, w *world) {
 	sc.Step(`^a SWARG\.md with the text "([^"]*)" in the parent of the working directory$`, func(text string) error {
 		return os.WriteFile(filepath.Join(w.parentDir(), "SWARG.md"), []byte(text+"\n"), 0o644)
 	})
+	sc.Step(`^a rules file "([^"]*)" with the text "([^"]*)" in the working directory$`, func(name, text string) error {
+		return os.WriteFile(filepath.Join(w.cwd(), name), []byte(text+"\n"), 0o644)
+	})
+	sc.Step(`^the working directory is inside a git work tree$`, func() error {
+		return os.Mkdir(filepath.Join(w.cwd(), ".git"), 0o755)
+	})
 	sc.Step(`^a working directory without a SWARG\.md$`, func() error { return nil })
 	sc.Step(`^the Block "([^"]*)" is (?:switched )?off$`, func(name string) error {
 		w.act(func() error { return w.set.SetEnabled(name, false) })
